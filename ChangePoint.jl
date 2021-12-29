@@ -5,6 +5,7 @@ using Base:@kwdef
 export PDMP
 export pars
 export obs
+dim = 4
 @kwdef mutable struct pars
     ρ::Float64 = 0.9
     σϕ::Float64 = 1.0
@@ -145,7 +146,6 @@ function CalSampDen(X,Start,End,prevξ,y,par)
     end
     return llk
 end
-
 # Define functions for calculating the joint density of the jump times and values
 function CalPDMP(proc,End,par)
     IJ = Gamma(par.α,par.β)
@@ -203,7 +203,7 @@ function insertPDMP(laterξ,oldproc)
     phi = laterξ.ϕ
     K += oldproc.K 
     tau = [oldproc.τ;tau]
-    phi = [oldproc.ϕ;tau]
+    phi = [oldproc.ϕ;phi]
     return PDMP(K,tau,phi)
 end
 # Define functions used to calculate incremental weights
@@ -218,4 +218,20 @@ function DensityRatio(X,prevξ,y,Start,End,par)
     logS    = logccdf(Gamma(par.α,par.β),Start-prevξ.τ[end])
     return logPDMP + llk - logS
 end
+function BSRatio(prevξ,laterξ,y,Start,End,Final,par)
+    IJ = Gamma(par.α,par.β)
+    if laterξ.K == 0
+        logS = logccdf(IJ,Final-prevξ.τ[end]) - logccdf(IJ,Start-prevξ.τ[end])
+        logτ = 0.0
+        logϕ = 0.0
+        llk  = CalLlk(insertPDMP(laterξ,prevξ),y,Start,Final,par)
+    else
+        logS = -logccdf(IJ,Start-prevξ.τ[end])
+        logτ = logpdf(IJ,laterξ.τ[1]-prevξ.τ[end])
+        logϕ = logpdf(Normal(par.ρ*prevξ.ϕ[end],par.σϕ),laterξ.ϕ[1])
+        llk = CalLlk(insertPDMP(laterξ,prevξ),y,Start,laterξ.τ[1],par)
+    end
+    return logS+logτ+logϕ+llk
+end
+prior = truncated.(Normal.([0.0,0.0,0.0,0.0,0.0],[10,10,sqrt(10),sqrt(10^3),10^2]),[-Inf,0.0,0.0,0.0,0.0],[Inf,Inf,Inf,Inf,Inf])
 end

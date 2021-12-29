@@ -8,6 +8,11 @@ mutable struct SMCRes
     NWeights::Matrix{Float64}
     Ancestor::Matrix{Int64}
 end
+mutable struct BSRes
+    BackwardPath
+    L::Vector{Any}
+    BackIndex::Vector{Int64}
+end
 function SMC(N,TimeVec,y;model,par)
     T = length(TimeVec)-1
     X = Matrix{Any}(undef,N,T)
@@ -74,5 +79,65 @@ function cSMC(L,N,TimeVec,y;model,par)
         NW[:,n] = exp.(W[:,n] .- findmax(W[:,n])[1])/sum(exp.(W[:,n] .- findmax(W[:,n])[1]))
     end
     return SMCRes(X,J,W,NW,A)
+end
+function BS(SMCR,y,TimeVec;model,par)
+    N,T = size(SMCR.Weights)
+    BSWeight = zeros(N,T)
+    BSWeight[:,T] = SMCR.NWeights[:,T]
+    ParticleIndex = zeros(Int64,T)
+    ParticleIndex[T] = sample(1:N,Weights(BSWeight[:,T]),1)[1]
+    Laterξ = SMCR.Particles[ParticleIndex[T],T]
+    L = Vector{Any}(undef,T)
+    L[T] = SMCR.Particles[ParticleIndex[T],T]
+    for t = (T-1):-1:1
+        for i = 1:N
+            BSWeight[i,t] = SMCR.Weights[i,t]+model.BSRatio(SMCR.PDMP[i,t],Laterξ,y,TimeVec[t],TimeVec[t+1],TimeVec[end],par)
+        end
+        BSWeight[:,t] = exp.(BSWeight[:,t] .- findmax(BSWeight[:,t])[1] )
+        BSWeight[:,t] = BSWeight[:,t] / sum(BSWeight[:,t])
+        ParticleIndex[t] = sample(1:N,Weights(BSWeight[:,t]),1)[1]
+        L[t] = SMCR.Particles[ParticleIndex[t],t]
+        Laterξ = model.insertPDMP(Laterξ,L[t])
+    end
+    return BSRes(Laterξ,L,ParticleIndex)
+end
+    
+function TunePars(model,y;args)
+    args = args
+    λvec = zeros(args.NAdapt+1)
+    Σ    = args.Σ0
+    μ    = args.μ0
+    λvec[1] = args.λ0
+    # initialise 
+    oldθ = rand.(model.prior)
+    oldpar = ChangePoint.pars(ρ=oldθ[1],σϕ=oldθ[2],σy=oldθ[3],α=oldθ[4],β=oldθ[5])
+    R = VRPF.SMC(args.SMCN,args.T,y;model=model,par=oldpar)
+    BSR = VRPF.BS(R,y,args.T,model=model,par=oldpar)
+    Path = BSR.BackwardPath
+    L = BSR.L
+    # update
+    for n = 1:args.NAdapt
+        newθ = rand(MultivariateNormal(oldθ,λvec[n]*Σ))
+        newpar = ChangePoint.pars(ρ=newθ[1],σϕ=newθ[2],σy=newθ[3],α=newθ[4],β=newθ[5])
+        if sum(logpdf.(model.prior,newθ)) > -Inf
+            α = exp(min(0,sum(logpdf.(model.prior,newθ))+model.CalPDMP(Path,args.T[end],newpar)-sum(logpdf.(model.prior,oldθ))-model.CalPDMP(Path,args.T[end],oldpar)))
+        else
+            α = 0.0
+        end
+        if rand() < α
+            oldpar = newpar
+            oldθ = newθ
+        end
+        println(oldθ)
+        λvec[n+1] = exp(log(λvec[n])+n^(-1/4)*(α-0.234))
+        #println(size((oldθ.-μ)*transpose(oldθ.-μ)))
+        Σ = Σ + n^(-1/4)*((oldθ.-μ)*transpose(oldθ.-μ)-Σ)+1e-3*I
+        μ = μ .+ n^(-1/4)*(oldθ .- μ)
+        R = VRPF.cSMC(L,args.SMCN,args.T,y,model=model,par=oldpar)
+        BSR = VRPF.BS(R,y,args.T,model=model,par=oldpar)
+        Path = BSR.BackwardPath
+        L = BSR.L
+    end
+    return (λvec[end],Σ,oldθ)
 end
 end
