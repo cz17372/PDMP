@@ -5,14 +5,13 @@ using Base:@kwdef
 export PDMP
 export pars
 export obs
-dim = 4
+dim = 5
 @kwdef mutable struct pars
     ρ::Float64 = 0.9
     σϕ::Float64 = 1.0
     σy::Float64 = sqrt(0.5)
     α::Float64 = 4.0
     β::Float64 = 10.0
-    θ::Vector{Float64} = [ρ,σϕ,σy,α,β]
 end 
 mutable struct PDMP
     K::Int64
@@ -23,12 +22,20 @@ mutable struct obs
     t::Vector{Float64}
     y::Vector{Float64}
 end
+"""
+    convert_to_pars(θ)
+convert a vector of parameters θ to the mutable struct `pars` that specifies the model parameters
+"""
+function convert_to_pars(θ)
+    return pars(ρ=θ[1],σϕ=θ[2],σy=θ[3],α=θ[4],β=θ[5])
+end
+
 function SimData(;seed=12345,T=1000,dt=1,kws...)
     Random.seed!(seed)
-    θ = pars(;kws...).θ
-    IJ = Gamma(θ[4],θ[5])
-    ϵy = Normal(0,θ[3])
-    ϵϕ = Normal(0,θ[2])
+    par = pars(;kws...)
+    IJ = Gamma(par.α,par.β)
+    ϵy = Normal(0,par.σy)
+    ϵϕ = Normal(0,par.σϕ)
     # Generate the jump times
     JumpTimes = [0.0]
     while true
@@ -43,15 +50,15 @@ function SimData(;seed=12345,T=1000,dt=1,kws...)
     PhiVecs = zeros(length(JumpTimes))
     PhiVecs[1] = rand(ϵϕ)
     for n = 2:length(JumpTimes)
-        PhiVecs[n] = θ[1]*PhiVecs[n-1] + rand(ϵy)
+        PhiVecs[n] = par.ρ*PhiVecs[n-1] + rand(ϵy)
     end
     timevec = collect(dt:dt:T)
     N = length(timevec)
     y = zeros(N)
     for n = 1:N
-        y[n] = rand(Normal(PhiVecs[findlast(JumpTimes .< timevec[n])],θ[3]))
+        y[n] = rand(Normal(PhiVecs[findlast(JumpTimes .< timevec[n])],par.σy))
     end
-    return (PDMP(length(JumpTimes),JumpTimes,PhiVecs),obs(timevec,y))
+    return (PDMP(length(JumpTimes)-1,JumpTimes,PhiVecs),obs(timevec,y))
 end
 function ProcObsGraph(proc,y;proclabel="",obslabel="",xlab="Time",ylab="\\xi")
     T = y.t[end]
@@ -61,20 +68,35 @@ function ProcObsGraph(proc,y;proclabel="",obslabel="",xlab="Time",ylab="\\xi")
     end
     plot!([proc.τ[end],T],repeat([proc.ϕ[end]],2),label=proclabel,color=:red,linewidth=2.0)
 end
-# Generate jump times and values in time blocks for the SMC part
+function PlotPDMP(graph,Path,End;color=:green)
+    extendedτ = [Path.τ;[1000]]
+    for n = 1:length(extendedτ)-1
+        plot!(graph,extendedτ[n:n+1],[Path.ϕ[n],Path.ϕ[n]],label="",color=color,linewidth=2.0)
+    end
+    current()
+end
+
+
+"""
+    GenParticle(Start,End,y,par)
+Generate jump times and values in the first time block [Start,End]. `Start` must be 0.0 since this is the function used to sample particles in the first time block.
+"""
 function GenParticle(Start,End,y,par)
     if Start != 0.0
         throw("Not generating jumps in the first block, argument xi0 is required")
     end
     llk = 0.0
     MeanJumpTime = par.α * par.β
+    # Generate the number of jumps in the block
     K = rand(Poisson((End-Start)/MeanJumpTime))
+    # Calculate the log-density of sampling K
     llk += logpdf(Poisson((End-Start)/MeanJumpTime),K)
-    # First generate the jump times in the block
+    # Generate the jumps and calculate the log-densities of sampling those jumps
     τ = [[0.0];sort(rand(Uniform(Start,End),K))]
     llk += sum(log.(collect(1:K)/(End-Start)))
     prevϕ = 0.0
     ϕ = zeros(length(τ))
+    # Sampling the corresponding jump values 
     extendedτ = [τ;[End]]
     for i = 1:length(ϕ)
         partialy = y.y[extendedτ[i] .< y.t .<= extendedτ[i+1]]
@@ -86,7 +108,7 @@ function GenParticle(Start,End,y,par)
     end
     return (PDMP(K,τ,ϕ),llk)
 end
-function GenParticle(Start,End,prevξ,y,par)
+function GenParticle(Start,End,J0,y,par)
     if Start == 0.0
         @info "Generating jumps in the first block, argument xi0 is discarded..."
         proc,llk = GenParticle(Start,End,y,par)
@@ -99,7 +121,7 @@ function GenParticle(Start,End,prevξ,y,par)
     # First generate the jump times in the block
     τ = sort(rand(Uniform(Start,End),K))
     llk += sum(log.(collect(1:K)/(End-Start)))
-    prevϕ = prevξ.ϕ[end]
+    prevϕ = J0.ϕ[end]
     ϕ = zeros(length(τ))
     extendedτ = [τ;[End]]
     for i = 1:length(ϕ)
@@ -129,12 +151,12 @@ function CalSampDen(X,Start,End,y,par)
     end
     return llk
 end
-function CalSampDen(X,Start,End,prevξ,y,par)
+function CalSampDen(X,Start,End,J0,y,par)
     llk = 0.0
     MeanJumpTime = par.α * par.β
     llk += logpdf(Poisson((End-Start)/MeanJumpTime),X.K)
     llk += sum(log.(collect(1:X.K)/(End-Start)))
-    prevϕ = prevξ.ϕ[end]
+    prevϕ = J0.ϕ[end]
     extendedτ = [X.τ;[End]]
     for i = 1:length(X.ϕ)
         # Find the observations that 
@@ -147,23 +169,28 @@ function CalSampDen(X,Start,End,prevξ,y,par)
     return llk
 end
 # Define functions for calculating the joint density of the jump times and values
-function CalPDMP(proc,End,par)
+function PDMPDen(J0,End,par)
     IJ = Gamma(par.α,par.β)
-    logτ = sum(logpdf.(IJ,proc.τ[2:end] .- proc.τ[1:end-1]))
-    logϕ = sum(logpdf.(Normal.(par.ρ*[[0.0];proc.ϕ[1:end-1]],par.σϕ),proc.ϕ))
-    logS = logccdf(IJ,End-proc.τ[end])
+    logτ = sum(logpdf.(IJ,J0.τ[2:end] .- J0.τ[1:end-1]))
+    logϕ = sum(logpdf.(Normal.(par.ρ*[[0.0];J0.ϕ[1:end-1]],par.σϕ),J0.ϕ))
+    logS = logccdf(IJ,End-J0.τ[end])
     return logτ + logϕ + logS
 end
-function CalPDMP(proc,Start,End,prevξ,par)
+function PDMPDenRatio(J0,End0,J1,End1,par)
+    if End0 >= End1
+        throw("First PDMP must have smaller ending time the 2nd PDMP")
+    end
     IJ = Gamma(par.α,par.β)
-    if proc.K == 0
-        logS = logccdf(IJ,End-prevξ.τ[end])
+    if J1.K-J0.K == 0
+        # Means no jump after End0
+        logS = logccdf(IJ,End1-J1.τ[end])-logccdf(IJ,End0-J0.τ[end])
         logτ = 0.0
         logϕ = 0.0
     else
-        logS = logccdf(IJ,End-proc.τ[end])
-        logτ = sum(logpdf.(IJ,proc.τ .- [[prevξ.τ[end]];proc.τ[1:end-1]]))
-        logϕ = sum(logpdf.(Normal.(par.ρ*[[prevξ.ϕ[end]];proc.ϕ[1:end-1]],par.σϕ),proc.ϕ))
+        first = length(J0.τ)+1
+        logS = logccdf(IJ,End1-J1.τ[end])-logccdf(IJ,End0-J0.τ[end])
+        logτ = sum(logpdf.(IJ,J1.τ[first:end] .- J1.τ[first-1:end-1]))
+        logϕ = sum(logpdf.(Normal.(par.ρ*J1.ϕ[first-1:end-1],par.σϕ),J1.ϕ[first:end]))
     end
     return logτ + logϕ + logS
 end
@@ -176,17 +203,6 @@ function CalLlk(process,y,Start,End,par)
     timeind = findall(Start .< y.t .<= End)
     meanvec = Getϕfory.(Ref(process),y.t[timeind])
     return sum(logpdf.(Normal.(meanvec,par.σy),y.y[timeind]))
-end
-function addPDMP(prevξ,newproc...)
-    K = prevξ.K
-    tau = prevξ.τ
-    phi = prevξ.ϕ
-    for particle in newproc
-        K += particle.K
-        tau = [tau;particle.τ]
-        phi = [phi;particle.ϕ]
-    end
-    return PDMP(K,tau,phi)
 end
 function addPDMP(prevξ,newproc)
     K = prevξ.K
@@ -207,16 +223,18 @@ function insertPDMP(laterξ,oldproc)
     return PDMP(K,tau,phi)
 end
 # Define functions used to calculate incremental weights
-function DensityRatio(X,y,Start,End,par)
-    logPDMP = CalPDMP(X,End,par)
-    llk  = CalLlk(X,y,Start,End,par)
+function JointDensity(J0,y,Start,End,par)
+    if Start != 0.0
+        throw("Begin time must be 0 if the joint density of the pdmp is calculated")
+    end
+    logPDMP = PDMPDen(J0,End,par)
+    llk  = CalLlk(J0,y,Start,End,par)
     return logPDMP+llk
 end
-function DensityRatio(X,prevξ,y,Start,End,par)
-    logPDMP = CalPDMP(X,Start,End,prevξ,par)
-    llk     = CalLlk(addPDMP(prevξ,X),y,Start,End,par)
-    logS    = logccdf(Gamma(par.α,par.β),Start-prevξ.τ[end])
-    return logPDMP + llk - logS
+function JointDensityRatio(J0,End0,J1,End1,y,par)
+    PDMPRatio = PDMPDenRatio(J0,End0,J1,End1,par)
+    llkratio  = CalLlk(J1,y,End0,End1,par)
+    return PDMPRatio+llkratio
 end
 function BSRatio(prevξ,laterξ,y,Start,End,Final,par)
     IJ = Gamma(par.α,par.β)
