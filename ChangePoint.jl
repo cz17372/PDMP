@@ -29,12 +29,13 @@ convert a vector of parameters θ to the mutable struct `pars` that specifies th
 function convert_to_pars(θ)
     return pars(ρ=θ[1],σϕ=θ[2],σy=θ[3],α=θ[4],β=θ[5])
 end
-
-function SimData(;seed=12345,T=1000,dt=1,kws...)
+function Getϕfory(process,time)
+    return process.ϕ[findlast(process.τ .< time)]
+end
+function SimData(;seed=12345,T=1000.0,dt=1,kws...)
     Random.seed!(seed)
     par = pars(;kws...)
     IJ = Gamma(par.α,par.β)
-    ϵy = Normal(0,par.σy)
     ϵϕ = Normal(0,par.σϕ)
     # Generate the jump times
     JumpTimes = [0.0]
@@ -50,14 +51,14 @@ function SimData(;seed=12345,T=1000,dt=1,kws...)
     PhiVecs = zeros(length(JumpTimes))
     PhiVecs[1] = rand(ϵϕ)
     for n = 2:length(JumpTimes)
-        PhiVecs[n] = par.ρ*PhiVecs[n-1] + rand(ϵy)
+        PhiVecs[n] = par.ρ*PhiVecs[n-1] + rand(ϵϕ)
     end
+    Process = PDMP(length(JumpTimes)-1,JumpTimes,PhiVecs)
     timevec = collect(dt:dt:T)
     N = length(timevec)
     y = zeros(N)
-    for n = 1:N
-        y[n] = rand(Normal(PhiVecs[findlast(JumpTimes .< timevec[n])],par.σy))
-    end
+    meanvec = Getϕfory.(Ref(Process),timevec)
+    y = rand.(Normal.(meanvec,par.σy))
     return (PDMP(length(JumpTimes)-1,JumpTimes,PhiVecs),obs(timevec,y))
 end
 function ProcObsGraph(proc,y;proclabel="",obslabel="",xlab="Time",ylab="\\xi")
@@ -75,8 +76,6 @@ function PlotPDMP(graph,Path,End;color=:green)
     end
     current()
 end
-
-
 """
     GenParticle(Start,End,y,par)
 Generate jump times and values in the first time block [Start,End]. `Start` must be 0.0 since this is the function used to sample particles in the first time block.
@@ -195,9 +194,7 @@ function PDMPDenRatio(J0,End0,J1,End1,par)
     return logτ + logϕ + logS
 end
 # Define functions for calculating the likelihood of the observations
-function Getϕfory(process,time)
-    return process.ϕ[findlast(process.τ .< time)]
-end
+
 function CalLlk(process,y,Start,End,par)
     # Get the observations that are in the interval [Start,End]
     timeind = findall(Start .< y.t .<= End)
@@ -239,17 +236,18 @@ end
 function BSRatio(prevξ,laterξ,y,Start,End,Final,par)
     IJ = Gamma(par.α,par.β)
     if laterξ.K == 0
-        logS = logccdf(IJ,Final-prevξ.τ[end]) - logccdf(IJ,Start-prevξ.τ[end])
+        logS = logccdf(IJ,Final-prevξ.τ[end]) - logccdf(IJ,End-prevξ.τ[end])
         logτ = 0.0
         logϕ = 0.0
-        llk  = CalLlk(insertPDMP(laterξ,prevξ),y,Start,Final,par)
+        llk  = CalLlk(insertPDMP(laterξ,prevξ),y,End,Final,par)
     else
-        logS = -logccdf(IJ,Start-prevξ.τ[end])
+        logS = -logccdf(IJ,End-prevξ.τ[end])
         logτ = logpdf(IJ,laterξ.τ[1]-prevξ.τ[end])
         logϕ = logpdf(Normal(par.ρ*prevξ.ϕ[end],par.σϕ),laterξ.ϕ[1])
-        llk = CalLlk(insertPDMP(laterξ,prevξ),y,Start,laterξ.τ[1],par)
+        llk = CalLlk(insertPDMP(laterξ,prevξ),y,End,laterξ.τ[1],par)
     end
     return logS+logτ+logϕ+llk
 end
 prior = truncated.(Normal.([0.0,0.0,0.0,0.0,0.0],[10,10,sqrt(10),sqrt(10^3),10^2]),[-Inf,0.0,0.0,0.0,0.0],[Inf,Inf,Inf,Inf,Inf])
+logprior(θ) = sum(logpdf.(prior,θ))
 end

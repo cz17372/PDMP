@@ -105,60 +105,144 @@ end
 @kwdef mutable struct PGargs
     dim::Int64
     λ0::Float64 = 1.0
-    Σ0::Matrix{Float64} = Matrix{Float64}(I,dim,dim)
+    Σ0::Matrix{Float64} = 10.0*Matrix{Float64}(I,dim,dim)
     μ0::Vector{Float64} = zeros(dim)
     NAdapt::Int64 = 50000
     NBurn::Int64 = 10000
-    NChain::Int64= 100000
+    NChain::Int64= 50000
+    SMCAdaptN::Int64 = 10
     SMCN::Int64 = 100
     T::Vector{Float64}
+    NFold::Int64 = 500
 end
-function TunePars(model,y,T;kws...)
+function LogPosteriorRatio(oldθ,newθ,process,y,End,model)
+    newprior = model.logprior(newθ)
+    oldprior = model.logprior(oldθ)
+    newllk   = model.JointDensity(process,y,0.0,End,model.convert_to_pars(newθ))
+    oldllk   = model.JointDensity(process,y,0.0,End,model.convert_to_pars(oldθ))
+    return newprior+newllk-oldprior-oldllk
+end
+function Tuneλ(oldθ,Z,λ0,γ;process,y,End,model)
+    newλ =zeros(length(λ0))
+    k = length(λ0)
+    E = Matrix{Float64}(I,k,k)
+    for i = 1:k
+        tempnewθ = oldθ .+ Z[i]*E[i,:]
+        if model.logprior(tempnewθ) == -Inf
+            tempα = 0.0
+        else
+            tempα    = min(1,exp(LogPosteriorRatio(oldθ,tempnewθ,process,y,End,model)))
+        end
+        newλ[i]  = exp(log(λ0[i]) + γ*(tempα-0.234))
+    end
+    return newλ
+end
+
+function TunePars(model,y,T;method,kws...)
     args = PGargs(;dim=model.dim,T=T,kws...)
-    λvec = zeros(args.NAdapt+1)
+    if method == "Component"
+        λmat = zeros(args.NAdapt+1,model.dim)
+        λmat[1,:] = args.λ0 * ones(args.dim)
+    else
+        λvec = zeros(args.NAdapt+1)
+        λvec[1] = args.λ0
+    end
     Σ    = args.Σ0
     μ    = args.μ0
-    λvec[1] = args.λ0
+    
     # initialise 
     oldθ = rand.(model.prior)
+    #oldθ = [0.0,2.0,2.0,10.0,10.0]
     oldpar = model.convert_to_pars(oldθ)
-    R = VRPF.SMC(args.SMCN,args.T,y;model=model,par=oldpar)
-    BSR = VRPF.BS(R,y,args.T,model=model,par=oldpar)
+    R = SMC(args.SMCAdaptN,args.T,y;model=model,par=oldpar)
+    BSR = BS(R,y,args.T,model=model,par=oldpar)
     Path = BSR.BackwardPath
     L = BSR.L
     # update
     @info "Tuning PG parameters..."
-    for n = 1:args.NAdapt
-        newθ = rand(MultivariateNormal(oldθ,λvec[n]*Σ))
+    @showprogress 1 for n = 1:args.NAdapt
+        # Propose new parameters
+        if method == "Component"
+            Λ = Matrix{Float64}(Diagonal(sqrt.(λmat[n,:])))
+            vars = Λ*cholesky(Σ).L; vars = vars*transpose(vars)
+            Z = rand(MultivariateNormal(zeros(args.dim),vars))
+        else
+            Z = rand(MultivariateNormal(zeros(args.dim),λvec[n]*Σ))
+        end
+        newθ = oldθ.+Z
         newpar = model.convert_to_pars(newθ)
-        if sum(logpdf.(model.prior,newθ)) > -Inf
-            α = exp(min(0,sum(logpdf.(model.prior,newθ))+model.JointDensity(Path,y,0.0,args.T[end],newpar)-sum(logpdf.(model.prior,oldθ))-model.JointDensity(Path,y,0.0,args.T[end],oldpar)))
+        if model.logprior(newθ) > -Inf
+            LLkRatio = LogPosteriorRatio(oldθ,newθ,Path,y,args.T[end],model)
+            α = min(1,exp(LLkRatio))
+            #println("density of old is",model.JointDensity(Path,y,0.0,args.T[end],oldpar))
+            #println("density of new is",model.JointDensity(Path,y,0.0,args.T[end],newpar))
         else
             α = 0.0
         end
+        if method=="Component"
+            λmat[n+1,:] =Tuneλ(oldθ,Z,λmat[n,:],n^(-1/3),process=Path,y=y,End=args.T[end],model=model)
+        else
+            λvec[n+1] = exp(log(λvec[n])+n^(-1/3)*(α - 0.234))
+        end
+        Σ = Σ + n^(-1/3)*((oldθ.-μ)*transpose(oldθ.-μ)-Σ)+1e-10*I
+        μ = μ .+ n^(-1/3)*(oldθ .- μ)
         if rand() < α
             oldpar = newpar
             oldθ = newθ
         end
-        println(oldθ)
-        λvec[n+1] = exp(log(λvec[n])+n^(-1/3)*(α-0.234))
-        μ = μ .+ n^(-1/3)*(oldθ .- μ)
-        #println(size((oldθ.-μ)*transpose(oldθ.-μ)))
-        Σ = Σ + n^(-1/3)*((oldθ.-μ)*transpose(oldθ.-μ)-Σ)+1e-10*I
-        println("lambda = ",λvec[n+1])
-        R = VRPF.cSMC(L,args.SMCN,args.T,y,model=model,par=oldpar)
-        BSR = VRPF.BS(R,y,args.T,model=model,par=oldpar)
+        #println(oldθ)
+        """
+        if method == "Component"
+            println("lambda = ",λmat[n+1,:])
+        else
+            println("lambda = ",λvec[n+1])
+        end
+        """
+        R = cSMC(L,args.SMCAdaptN,args.T,y,model=model,par=oldpar)
+        BSR = BS(R,y,args.T,model=model,par=oldpar)
         Path = BSR.BackwardPath
-        println("No. Jumps = ",Path.K)
+        #println("No. Jumps = ",Path.K,"New Density = ",model.JointDensity(Path,y,0.0,args.T[end],oldpar))
         L = BSR.L
-        println("Likelihood of observations is",model.CalLlk(Path,y,0.0,args.T[end],oldpar))
     end
-    return (λvec[end],Σ)
+    if method == "Component"
+        return (λmat[end,:],Σ)
+    else
+        return (λvec[end],Σ)
+    end
 end
-function PG(model,y,T;kws...)
+function MH(θ0,Process,y,NIter;method,model,T,λ,Σ)
+    # Create Output Arrray
+    if method == "Component"
+        Λ = Matrix{Float64}(Diagonal(sqrt.(λ)))
+        vars = Λ*cholesky(Σ).L; vars = vars*transpose(vars)
+    else
+        vars = λ*Σ
+    end
+    oldθ = θ0
+    oldpar = model.convert_to_pars(θ0)
+    llk0 = model.JointDensity(Process,y,0.0,T,oldpar)
+    prior0 = model.logprior(oldθ)
+    for n = 1:NIter
+        newθ = rand(MultivariateNormal(oldθ,vars))
+        prior1 = model.logprior(newθ)
+        if prior1 == -Inf
+            α = 0.0
+        else
+            llk1 = model.JointDensity(Process,y,0.0,T,model.convert_to_pars(newθ))
+            α = min(1,exp(llk1+prior1-llk0-prior0))
+        end
+        if rand() < α
+            oldθ = newθ
+            llk0 = llk1
+            prior0 = prior1
+        end
+    end
+    return oldθ
+end
+function PG(model,y,T;method,kws...)
     args = PGargs(;dim=model.dim,T=T,kws...)
     θ = zeros(args.NBurn+args.NChain+1,args.dim)
-    λ,Σ = TunePars(model,y,T;kws...)
+    λ,Σ = TunePars(model,y,T;method=method,kws...)
     θ[1,:] = rand.(model.prior)
     oldpar = model.convert_to_pars(θ[1,:])
     R = VRPF.SMC(args.SMCN,args.T,y;model=model,par=oldpar)
@@ -167,21 +251,9 @@ function PG(model,y,T;kws...)
     L = BSR.L
     @info "Running PG algorithms..."
     @showprogress 1 for n = 1:(args.NBurn+args.NChain)
-        newθ = rand(MultivariateNormal(θ[n,:],λ*Σ))
-        newpar = model.convert_to_pars(newθ)
-        if sum(logpdf.(model.prior,newθ)) > -Inf
-            α = exp(min(0,sum(logpdf.(model.prior,newθ))+model.CalPDMP(Path,args.T[end],newpar)+model.CalLlk(Path,y,0.0,args.T[end],newpar)-sum(logpdf.(model.prior,θ[n,:]))-model.CalPDMP(Path,args.T[end],oldpar)-model.CalLlk(Path,y,0.0,args.T[end],oldpar)))
-        else
-            α = 0.0
-        end
-        if rand() < α
-            oldpar = newpar
-            θ[n+1,:] = newθ
-        else
-            θ[n+1,:] = θ[n,:]
-        end
-        R = VRPF.cSMC(L,args.SMCN,args.T,y,model=model,par=oldpar)
-        BSR = VRPF.BS(R,y,args.T,model=model,par=oldpar)
+        θ[n+1,:] = MH(θ[n,:],Path,y,args.NFold,method=method,model=model,T=T[end],λ=λ,Σ=Σ)
+        R = VRPF.cSMC(L,args.SMCN,args.T,y,model=model,par=model.convert_to_pars(θ[n+1,:]))
+        BSR = VRPF.BS(R,y,args.T,model=model,par=model.convert_to_pars(θ[n+1,:]))
         Path = BSR.BackwardPath
         L = BSR.L
     end
