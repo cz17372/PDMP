@@ -1,7 +1,6 @@
 module BlockVPRF
 using Distributions, StatsBase, Random, LinearAlgebra, ProgressMeter
 using Base:@kwdef
-
 mutable struct SMCRes
     Particles::Matrix{Any}
     PDMP::Matrix{Any}
@@ -9,14 +8,11 @@ mutable struct SMCRes
     NWeights::Matrix{Float64}
     Ancestor::Matrix{Int64}
 end
-
 mutable struct BSRes
     BackwardPath
     L::Vector{Any}
     BackIndex::Vector{Int64}
 end
-
-
 function SMC(N,TimeVec,y;model,par)
     T = length(TimeVec) - 1
     Z = Matrix{Any}(undef,N,T)
@@ -26,8 +22,9 @@ function SMC(N,TimeVec,y;model,par)
     A = zeros(Int64,N,T-1)
     SampDenMat = zeros(N,T)
     for i = 1:N
-        Z[i,1], SampDenMat[i,1] = model.GenParticle(TimeVec[1],TimeVec[2],y,par)
-        J[i,1] = Z[i,1]
+        X, SampDenMat[i,1] = model.GenParticle(TimeVec[1],TimeVec[2],y,par)
+        Z[i,1] = model.Z(1,nothing,nothing,X)
+        J[i,1] = Z[i,1].X
         W[i,1] = model.JointDensity(J[i,1],y,TimeVec[1],TimeVec[2],par) - SampDenMat[i,1]
     end
     NW[:,1] = exp.(W[:,1] .- findmax(W[:,1])[1])/sum(exp.(W[:,1] .- findmax(W[:,1])[1]))
@@ -42,7 +39,6 @@ function SMC(N,TimeVec,y;model,par)
     end
     return SMCRes(Z,J,W,NW,A)
 end
-
 function cSMC(L,N,TimeVec,y;model,par)
     T = length(TimeVec)-1
     Z = Matrix{Any}(undef,N,T)
@@ -54,12 +50,13 @@ function cSMC(L,N,TimeVec,y;model,par)
     for i = 1:N
         if i == 1
             Z[i,1] = L[1]
-            SampDenMat[i,1] = model.CalSampDen(Z[i,1],TimeVec[1],TimeVec[2],y,par)
-            J[i,1] = Z[i,1]
+            SampDenMat[i,1] = model.CalSampDen(Z[i,1].X,TimeVec[1],TimeVec[2],y,par)
+            J[i,1] = Z[i,1].X
             W[i,1] = model.JointDensity(J[i,1],y,TimeVec[1],TimeVec[2],par) - SampDenMat[i,1]
         else
-            Z[i,1], SampDenMat[i,1] = model.GenParticle(TimeVec[1],TimeVec[2],y,par)
-            J[i,1] = Z[i,1]
+            X, SampDenMat[i,1] = model.GenParticle(TimeVec[1],TimeVec[2],y,par)
+            Z[i,1] = model.Z(1,nothing,nothing,X)
+            J[i,1] = Z[i,1].X
             W[i,1] = model.JointDensity(J[i,1],y,TimeVec[1],TimeVec[2],par) - SampDenMat[i,1]
         end
     end
@@ -83,8 +80,6 @@ function cSMC(L,N,TimeVec,y;model,par)
     end
     return SMCRes(Z,J,W,NW,A)
 end
-
-
 function TraceLineage(A,n)
     T = size(A,2)+1
     output = zeros(Int64,T)
@@ -94,8 +89,193 @@ function TraceLineage(A,n)
     end
     return output
 end
-
-
-
-
+function BS(SMCR,y,TimeVec;model,par)
+    N,T = size(SMCR.Weights)
+    BSWeight = zeros(N,T)
+    BSWeight[:,T] = SMCR.NWeights[:,T]
+    ParticleIndex = zeros(Int64,T)
+    ParticleIndex[T] = sample(1:N,Weights(BSWeight[:,T]),1)[1]
+    Laterξ = SMCR.Particles[ParticleIndex[T],T].X
+    L = Vector{Any}(undef,T)
+    L[T] = SMCR.Particles[ParticleIndex[T],T]
+    for t = (T-1):-1:1
+        for i = 1:N
+            BSWeight[i,t] = SMCR.Weights[i,t]+model.BlockBSIncrementalWeight(SMCR.PDMP[i,t],L[t+1],Laterξ,y,TimeVec[t],TimeVec[t+1],TimeVec[end],par)
+        end
+        BSWeight[:,t] = exp.(BSWeight[:,t] .- findmax(BSWeight[:,t])[1] )
+        BSWeight[:,t] = BSWeight[:,t] / sum(BSWeight[:,t])
+        ParticleIndex[t] = sample(1:N,Weights(BSWeight[:,t]),1)[1]
+        L[t] = SMCR.Particles[ParticleIndex[t],t]
+        if L[t+1].M == 1
+            Laterξ = model.PDMP(L[t].X.K + 1 + Laterξ.K,[L[t].X.τ;[L[t+1].taum];Laterξ.τ],[L[t].X.ϕ;[L[t+1].phim];Laterξ.ϕ])
+        else
+            if isnothing(L[t+1].taum)
+                Laterξ = model.PDMP(L[t].X.K + Laterξ.K,[L[t].X.τ;Laterξ.τ],[L[t].X.ϕ;Laterξ.ϕ])
+            else
+                Laterξ = model.PDMP(L[t].X.K + Laterξ.K,[L[t].X.τ[1:end-1];[L[t+1].taum];Laterξ.τ],[L[t].X.ϕ[1:end-1];[L[t+1].phim];Laterξ.ϕ])
+            end
+        end
+    end
+    return BSRes(Laterξ,L,ParticleIndex)
+end
+@kwdef mutable struct PGargs
+    dim::Int64
+    λ0::Float64 = 1.0
+    Σ0::Matrix{Float64} = 10.0*Matrix{Float64}(I,dim,dim)
+    μ0::Vector{Float64} = zeros(dim)
+    NAdapt::Int64 = 50000
+    NBurn::Int64 = 10000
+    NChain::Int64= 50000
+    SMCAdaptN::Int64 = 10
+    SMCN::Int64 = 100
+    T::Vector{Float64}
+    NFold::Int64 = 500
+end
+function LogPosteriorRatio(oldθ,newθ,process,y,End,model)
+    newprior = model.logprior(newθ)
+    oldprior = model.logprior(oldθ)
+    newllk   = model.JointDensity(process,y,0.0,End,model.convert_to_pars(newθ))
+    oldllk   = model.JointDensity(process,y,0.0,End,model.convert_to_pars(oldθ))
+    return newprior+newllk-oldprior-oldllk
+end
+function Tuneλ(oldθ,Z,λ0,γ;process,y,End,model)
+    newλ =zeros(length(λ0))
+    k = length(λ0)
+    E = Matrix{Float64}(I,k,k)
+    for i = 1:k
+        tempnewθ = oldθ .+ Z[i]*E[i,:]
+        if model.logprior(tempnewθ) == -Inf
+            tempα = 0.0
+        else
+            tempα    = min(1,exp(LogPosteriorRatio(oldθ,tempnewθ,process,y,End,model)))
+        end
+        newλ[i]  = exp(log(λ0[i]) + γ*(tempα-0.234))
+    end
+    return newλ
+end
+function TunePars(model,y,T;method,kws...)
+    args = PGargs(;dim=model.dim,T=T,kws...)
+    if method == "Component"
+        λmat = zeros(args.NAdapt+1,model.dim)
+        λmat[1,:] = args.λ0 * ones(args.dim)
+    else
+        λvec = zeros(args.NAdapt+1)
+        λvec[1] = args.λ0
+    end
+    Σ    = args.Σ0
+    μ    = args.μ0
+    
+    # initialise 
+    oldθ = rand.(model.prior)
+    #oldθ = [0.0,2.0,2.0,10.0,10.0]
+    oldpar = model.convert_to_pars(oldθ)
+    R = SMC(args.SMCAdaptN,args.T,y;model=model,par=oldpar)
+    BSR = BS(R,y,args.T,model=model,par=oldpar)
+    Path = BSR.BackwardPath
+    L = BSR.L
+    L = model.Rejuvenate(Path,args.T,oldpar)
+    # update
+    @info "Tuning PG parameters..."
+    @showprogress 1 for n = 1:args.NAdapt
+        # Propose new parameters
+        if method == "Component"
+            Λ = Matrix{Float64}(Diagonal(sqrt.(λmat[n,:])))
+            vars = Λ*cholesky(Σ).L; vars = vars*transpose(vars)
+            Z = rand(MultivariateNormal(zeros(args.dim),vars))
+        else
+            Z = rand(MultivariateNormal(zeros(args.dim),λvec[n]*Σ))
+        end
+        newθ = oldθ.+Z
+        newpar = model.convert_to_pars(newθ)
+        if model.logprior(newθ) > -Inf
+            LLkRatio = LogPosteriorRatio(oldθ,newθ,Path,y,args.T[end],model)
+            α = min(1,exp(LLkRatio))
+            #println("density of old is",model.JointDensity(Path,y,0.0,args.T[end],oldpar))
+            #println("density of new is",model.JointDensity(Path,y,0.0,args.T[end],newpar))
+        else
+            α = 0.0
+        end
+        if method=="Component"
+            λmat[n+1,:] =Tuneλ(oldθ,Z,λmat[n,:],n^(-1/3),process=Path,y=y,End=args.T[end],model=model)
+        else
+            λvec[n+1] = exp(log(λvec[n])+n^(-1/3)*(α - 0.234))
+        end
+        Σ = Σ + n^(-1/3)*((oldθ.-μ)*transpose(oldθ.-μ)-Σ)+1e-10*I
+        μ = μ .+ n^(-1/3)*(oldθ .- μ)
+        if rand() < α
+            oldpar = newpar
+            oldθ = newθ
+        end
+        #println(oldθ)
+        """
+        if method == "Component"
+            println("lambda = ",λmat[n+1,:])
+        else
+            println("lambda = ",λvec[n+1])
+        end
+        """
+        R = cSMC(L,args.SMCAdaptN,args.T,y,model=model,par=oldpar)
+        BSR = BS(R,y,args.T,model=model,par=oldpar)
+        Path = BSR.BackwardPath
+        #println("No. Jumps = ",Path.K,"New Density = ",model.JointDensity(Path,y,0.0,args.T[end],oldpar))
+        L = BSR.L
+        L = model.Rejuvenate(Path,args.T,oldpar)
+    end
+    if method == "Component"
+        return (λmat[end,:],Σ)
+    else
+        return (λvec[end],Σ)
+    end
+end
+function MH(θ0,Process,y,NIter;method,model,T,λ,Σ)
+    # Create Output Arrray
+    if method == "Component"
+        Λ = Matrix{Float64}(Diagonal(sqrt.(λ)))
+        vars = Λ*cholesky(Σ).L; vars = vars*transpose(vars)
+    else
+        vars = λ*Σ
+    end
+    oldθ = θ0
+    oldpar = model.convert_to_pars(θ0)
+    llk0 = model.JointDensity(Process,y,0.0,T,oldpar)
+    prior0 = model.logprior(oldθ)
+    for n = 1:NIter
+        newθ = rand(MultivariateNormal(oldθ,vars))
+        prior1 = model.logprior(newθ)
+        if prior1 == -Inf
+            α = 0.0
+        else
+            llk1 = model.JointDensity(Process,y,0.0,T,model.convert_to_pars(newθ))
+            α = min(1,exp(llk1+prior1-llk0-prior0))
+        end
+        if rand() < α
+            oldθ = newθ
+            llk0 = llk1
+            prior0 = prior1
+        end
+    end
+    return oldθ
+end
+function PG(model,y,T;method,kws...)
+    args = PGargs(;dim=model.dim,T=T,kws...)
+    θ = zeros(args.NBurn+args.NChain+1,args.dim)
+    λ,Σ = TunePars(model,y,T;method=method,kws...)
+    θ[1,:] = rand.(model.prior)
+    oldpar = model.convert_to_pars(θ[1,:])
+    R = SMC(args.SMCN,args.T,y;model=model,par=oldpar)
+    BSR = BS(R,y,args.T,model=model,par=oldpar)
+    Path = BSR.BackwardPath
+    L = BSR.L
+    L = model.Rejuvenate(Path,args.T,oldpar)
+    @info "Running PG algorithms..."
+    @showprogress 1 for n = 1:(args.NBurn+args.NChain)
+        θ[n+1,:] = MH(θ[n,:],Path,y,args.NFold,method=method,model=model,T=T[end],λ=λ,Σ=Σ)
+        R = cSMC(L,args.SMCN,args.T,y,model=model,par=model.convert_to_pars(θ[n+1,:]))
+        BSR = BS(R,y,args.T,model=model,par=model.convert_to_pars(θ[n+1,:]))
+        Path = BSR.BackwardPath
+        L = BSR.L
+        L = model.Rejuvenate(Path,args.T,model.convert_to_pars(θ[n+1,:]))
+    end
+    return θ[(args.NBurn+2):end,:]
+end
 end

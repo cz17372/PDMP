@@ -249,8 +249,7 @@ function BSRatio(prevξ,laterξ,y,Start,End,Final,par)
 end
 prior = truncated.(Normal.([0.0,0.0,0.0,0.0,0.0],[10,10,sqrt(10),sqrt(10^3),10^2]),[-Inf,0.0,0.0,0.0,0.0],[Inf,Inf,Inf,Inf,Inf])
 logprior(θ) = sum(logpdf.(prior,θ))
-
-
+# Block SMC functions...
 function μ(m,t0,t1,J1)
     tau = J1.τ[findlast(J1.τ .< t1)]
     if tau <= t0
@@ -268,7 +267,7 @@ function λ(ubar,t0,t1,J1,par)
         return 0.0
     else
         ind = findlast(J1.τ .<= t1)
-        llk = logpdf(Normal(J1.ϕ[ind],par.σϕ),ubar.phi) + logpdf(truncated(Normal(J1.τ[ind],par.α*par.β/10.0) ,max(t0,J1.τ[ind-1]),t1),ubar.tau)
+        llk = logpdf(Normal(J1.ϕ[ind],par.σϕ),ubar.phi) + logpdf(truncated(Normal(J1.τ[ind],par.α*par.β/20.0) ,max(t0,J1.τ[ind-1]),t1),ubar.tau)
         return llk
     end
 end       
@@ -279,7 +278,7 @@ mutable struct Z
     X::PDMP
 end
 function GenZ(J0,t0,t1,t2,y,par)
-    modσ = par.α*par.β/10.0
+    modσ = par.α*par.β/20.0
     llk = 0.0
     # Generate jump times in [t1,t2] 
     MeanJumpTime = (t2-t1)/(par.α*par.β)
@@ -344,7 +343,7 @@ function GenZ(J0,t0,t1,t2,y,par)
     return (Z(M,taum,phim,ChangePoint.PDMP(K,τ,ϕ)),llk)
 end
 function ProposedZDendity(Z,J0,t0,t1,t2,y,par)
-    modσ = par.α*par.β/10.0
+    modσ = par.α*par.β/20.0
     llk = 0.0
     MeanJumpTime = (t2-t1)/(par.α*par.β)
     llk += logpdf(Poisson(MeanJumpTime),Z.X.K)
@@ -483,7 +482,7 @@ function Rejuvenate(J,T,par)
         else
             prevtau = J.τ[findlast(J.τ .< temptau[end])]
             prevphi = J.ϕ[findlast(J.τ .< temptau[end])]
-            taubar = rand(truncated(Normal(temptau[end],par.α*par.β/10.0),max(T[n],prevtau),T[n+1]))
+            taubar = rand(truncated(Normal(temptau[end],par.α*par.β/20.0),max(T[n],prevtau),T[n+1]))
             phibar = rand(Normal(prevphi,par.σϕ))
             X[n] = PDMP(length(temptau)-1,[temptau[1:end-1];[taubar]],[tempphi[1:end-1];[phibar]])
             U[n,:] = [temptau[end],tempphi[end]]
@@ -517,11 +516,66 @@ function Rejuvenate(J,T,par)
     temptau = J.τ[findall(T[P] .<= J.τ .< T[P+1])]
     tempphi = J.ϕ[findall(T[P] .<= J.τ .< T[P+1])]
     X[P] = PDMP(length(temptau),temptau,tempphi)
-    Z0[1] = X[1]
+    Z0[1] = Z(1,nothing,nothing,X[1])
     for n=2:P
         Z0[n] = Z(M[n-1],U[n-1,1],U[n-1,2],X[n])
     end
     return Z0
 end
-        
+function BlockBSIncrementalWeight(J0,Zstar,J1,y,t0,t1,tP,par)
+    IJ = Gamma(par.α,par.β)
+    if Zstar.M == 1
+        if J0.τ[end] > Zstar.taum
+            return -Inf
+        else
+            NewJ = PDMP(J0.K+1+J1.K,[J0.τ;[Zstar.taum];J1.τ],[J0.ϕ;[Zstar.phim];J1.ϕ])
+            logμ = μ(Zstar.M,t0,t1,NewJ)
+            logλ = λ((tau=nothing,phi=nothing),t0,t1,NewJ,par)
+            logτ = logpdf(IJ,Zstar.taum-J0.τ[end])
+            logϕ = logpdf(Normal(par.ρ*J0.ϕ[end],par.σϕ),Zstar.phim)
+            llk  = -CalLlk(J0,y,Zstar.taum,t1,par)
+            logS = -logccdf(IJ,t1-J0.τ[end])
+            return logμ + logλ + logτ + logϕ + logS + llk
+        end
+    else
+        # An adjust move is proposed
+        if isnothing(Zstar.taum)
+            # Means that no jumps in the previous block
+            if J0.τ[end] > t0
+                return -Inf
+            else
+                NewJ = PDMP(J0.K + J1.K,[J0.τ;J1.τ],[J0.ϕ;J1.ϕ])
+                logμ = μ(Zstar.M,t0,t1,NewJ)
+                logλ = λ((tau=nothing,phi=nothing),t0,t1,NewJ,par)
+                if J1.K == 0
+                    logτ = 0.0
+                    logϕ = 0.0
+                    logS = logccdf(IJ,tP-J0.τ[end])-logccdf(IJ,t1-J0.τ[end])
+                    llk  = CalLlk(NewJ,y,t1,tP,par)
+                else
+                    logτ = logpdf(IJ,J1.τ[1]-J0.τ[end])
+                    logϕ = logpdf(Normal(par.ρ*J0.ϕ[end],par.σϕ),J1.ϕ[1])
+                    logS = - logccdf(IJ,t1-J0.τ[end])
+                    llk = CalLlk(NewJ,y,t1,J1.τ[1],par)
+                end
+                return logμ + logλ + logτ + logϕ + logS + llk
+            end
+        else
+            if J0.τ[end] <= t0
+                return -Inf
+            elseif J0.τ[end-1] > Zstar.taum
+                return -Inf
+            else
+                NewJ = PDMP(J0.K + J1.K,[J0.τ[1:end-1];[Zstar.taum];J1.τ],[J0.ϕ[1:end-1];[Zstar.phim];J1.ϕ])
+                logμ = μ(Zstar.M,t0,t1,NewJ)
+                logλ = λ((tau=J0.τ[end],phi=J0.ϕ[end]),t0,t1,NewJ,par)
+                logτ = logpdf(IJ,Zstar.taum-J0.τ[end-1]) - logpdf(IJ,J0.τ[end]-J0.τ[end-1])
+                logS = - logccdf(IJ,t1-J0.τ[end])
+                logϕ = logpdf(Normal(par.ρ*J0.ϕ[end-1],par.σϕ),Zstar.phim) - logpdf(Normal(par.ρ*J0.ϕ[end-1],par.σϕ),J0.ϕ[end])
+                llk  = CalLlk(NewJ,y,min(Zstar.taum,J0.τ[end]),t1,par) - CalLlk(J0,y,min(Zstar.taum,J0.τ[end]),t1,par)
+                return logμ + logλ + logτ + logϕ + logS + llk
+            end
+        end
+    end
+end
 end
