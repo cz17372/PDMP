@@ -23,14 +23,14 @@ for n= 2:1000
     plot!(Index[n,:],label="",color=:grey)
 end
 
-R = BlockVPRF.PG(ChangePoint,y,T,method="Global",SMCN=20) # (Time: 00:38:26)
-R2 = VRPF.PG(ChangePoint,y,T,method="Global",SMCN=20)
+R = BlockVPRF.PG(ChangePoint,y,T,method="Global",SMCN=5) # (Time: 00:38:26)
+R2 = VRPF.PG(ChangePoint,y,T,method="Global",SMCN=5)
 density(R[:,1])
 
-plot(R[:,3])
+plot(R[:,5])
 
 RES = autocor(R)
 RES2 = autocor(R2)
 t  = 1 ; plot(RES[:,t]);plot!(RES2[:,t])
 
-plot(R[:,5])
+plot(RES[:,5])
