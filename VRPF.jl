@@ -114,6 +114,8 @@ end
     SMCN::Int64 = 100
     T::Vector{Float64}
     NFold::Int64 = 500
+    Globalalpha::Float64 = 0.25
+    Componentalpha::Float64 = 0.5
 end
 function LogPosteriorRatio(oldθ,newθ,process,y,End,model)
     newprior = model.logprior(newθ)
@@ -122,7 +124,7 @@ function LogPosteriorRatio(oldθ,newθ,process,y,End,model)
     oldllk   = model.JointDensity(process,y,0.0,End,model.convert_to_pars(oldθ))
     return newprior+newllk-oldprior-oldllk
 end
-function Tuneλ(oldθ,Z,λ0,γ;process,y,End,model)
+function Tuneλ(oldθ,Z,λ0,γ;process,y,End,model,args)
     newλ =zeros(length(λ0))
     k = length(λ0)
     E = Matrix{Float64}(I,k,k)
@@ -133,11 +135,10 @@ function Tuneλ(oldθ,Z,λ0,γ;process,y,End,model)
         else
             tempα    = min(1,exp(LogPosteriorRatio(oldθ,tempnewθ,process,y,End,model)))
         end
-        newλ[i]  = exp(log(λ0[i]) + γ*(tempα-0.234))
+        newλ[i]  = exp(log(λ0[i]) + γ*(tempα-args.Componentalpha))
     end
     return newλ
 end
-
 function TunePars(model,y,T;method,kws...)
     args = PGargs(;dim=model.dim,T=T,kws...)
     if method == "Component"
@@ -180,9 +181,9 @@ function TunePars(model,y,T;method,kws...)
             α = 0.0
         end
         if method=="Component"
-            λmat[n+1,:] =Tuneλ(oldθ,Z,λmat[n,:],n^(-1/3),process=Path,y=y,End=args.T[end],model=model)
+            λmat[n+1,:] =Tuneλ(oldθ,Z,λmat[n,:],n^(-1/3),process=Path,y=y,End=args.T[end],model=model,args=args)
         else
-            λvec[n+1] = exp(log(λvec[n])+n^(-1/3)*(α - 0.234))
+            λvec[n+1] = exp(log(λvec[n])+n^(-1/3)*(α - args.Globalalpha))
         end
         Σ = Σ + n^(-1/3)*((oldθ.-μ)*transpose(oldθ.-μ)-Σ)+1e-10*I
         μ = μ .+ n^(-1/3)*(oldθ .- μ)
@@ -201,13 +202,14 @@ function TunePars(model,y,T;method,kws...)
         R = cSMC(L,args.SMCAdaptN,args.T,y,model=model,par=oldpar)
         BSR = BS(R,y,args.T,model=model,par=oldpar)
         Path = BSR.BackwardPath
+        #println("K=",Path.K,"llk=",model.JointDensity(Path,y,0.0,args.T[end],model.convert_to_pars(oldθ)))
         #println("No. Jumps = ",Path.K,"New Density = ",model.JointDensity(Path,y,0.0,args.T[end],oldpar))
         L = BSR.L
     end
     if method == "Component"
-        return (λmat[end,:],Σ)
+        return (λmat[end,:],Σ,oldθ)
     else
-        return (λvec[end],Σ)
+        return (λvec[end],Σ,oldθ)
     end
 end
 function MH(θ0,Process,y,NIter;method,model,T,λ,Σ)
@@ -239,11 +241,19 @@ function MH(θ0,Process,y,NIter;method,model,T,λ,Σ)
     end
     return oldθ
 end
-function PG(model,y,T;method,kws...)
+function PG(model,y,T;proppar=nothing,θ0=nothing,method="Global",kws...)
     args = PGargs(;dim=model.dim,T=T,kws...)
     θ = zeros(args.NBurn+args.NChain+1,args.dim)
-    λ,Σ = TunePars(model,y,T;method=method,kws...)
-    θ[1,:] = rand.(model.prior)
+    if isnothing(proppar)
+        λ,Σ,θ0 = TunePars(model,y,T;method=method,kws...)
+    else
+        λ,Σ = proppar
+    end
+    if isnothing(θ0)
+        θ[1,:] = rand.(model.prior)
+    else
+        θ[1,:] = θ0
+    end
     oldpar = model.convert_to_pars(θ[1,:])
     R = VRPF.SMC(args.SMCN,args.T,y;model=model,par=oldpar)
     BSR = VRPF.BS(R,y,args.T,model=model,par=oldpar)
@@ -259,5 +269,4 @@ function PG(model,y,T;method,kws...)
     end
     return θ[(args.NBurn+2):end,:]
 end
-
 end

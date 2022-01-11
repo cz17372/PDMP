@@ -1,4 +1,4 @@
-module BlockVPRF
+module BlockVRPF
 using Distributions, StatsBase, Random, LinearAlgebra, ProgressMeter
 using Base:@kwdef
 mutable struct SMCRes
@@ -13,7 +13,7 @@ mutable struct BSRes
     L::Vector{Any}
     BackIndex::Vector{Int64}
 end
-function SMC(N,TimeVec,y;model,par)
+function SMC(N,TimeVec,y;model,par,auxpar)
     T = length(TimeVec) - 1
     Z = Matrix{Any}(undef,N,T)
     J = Matrix{Any}(undef,N,T)
@@ -31,15 +31,15 @@ function SMC(N,TimeVec,y;model,par)
     for n = 2:T
         A[:,n-1] = sample(1:N,Weights(NW[:,n-1]),N)
         for i = 1:N
-            Z[i,n],SampDenMat[i,n] = model.GenZ(J[A[i,n-1],n-1],TimeVec[n-1],TimeVec[n],TimeVec[n+1],y,par)
-            W[i,n] = model.BlockIncrementalWeight(J[A[i,n-1],n-1],Z[i,n],TimeVec[n-1],TimeVec[n],TimeVec[n+1],y,par,SampDenMat[i,n])
+            Z[i,n],SampDenMat[i,n] = model.GenZ(J[A[i,n-1],n-1],TimeVec[n-1],TimeVec[n],TimeVec[n+1],y,par,auxpar)
+            W[i,n] = model.BlockIncrementalWeight(J[A[i,n-1],n-1],Z[i,n],TimeVec[n-1],TimeVec[n],TimeVec[n+1],y,par,auxpar,SampDenMat[i,n])
             J[i,n],_ = model.BlockAddPDMP(J[A[i,n-1],n-1],Z[i,n])
         end
         NW[:,n] = exp.(W[:,n] .- findmax(W[:,n])[1])/sum(exp.(W[:,n] .- findmax(W[:,n])[1]))
     end
     return SMCRes(Z,J,W,NW,A)
 end
-function cSMC(L,N,TimeVec,y;model,par)
+function cSMC(L,N,TimeVec,y;model,par,auxpar)
     T = length(TimeVec)-1
     Z = Matrix{Any}(undef,N,T)
     J = Matrix{Any}(undef,N,T)
@@ -67,12 +67,12 @@ function cSMC(L,N,TimeVec,y;model,par)
         for i = 1:N
             if i == 1
                 Z[i,n] = L[n]
-                SampDenMat[i,n] = model.ProposedZDendity(Z[i,n],J[A[i,n-1],n-1],TimeVec[n-1],TimeVec[n],TimeVec[n+1],y,par)
-                W[i,n] = model.BlockIncrementalWeight(J[A[i,n-1],n-1],Z[i,n],TimeVec[n-1],TimeVec[n],TimeVec[n+1],y,par,SampDenMat[i,n])
+                SampDenMat[i,n] = model.ProposedZDendity(Z[i,n],J[A[i,n-1],n-1],TimeVec[n-1],TimeVec[n],TimeVec[n+1],y,par,auxpar)
+                W[i,n] = model.BlockIncrementalWeight(J[A[i,n-1],n-1],Z[i,n],TimeVec[n-1],TimeVec[n],TimeVec[n+1],y,par,auxpar,SampDenMat[i,n])
                 J[i,n],_ = model.BlockAddPDMP(J[A[i,n-1],n-1],Z[i,n])
             else
-                Z[i,n],SampDenMat[i,n] = model.GenZ(J[A[i,n-1],n-1],TimeVec[n-1],TimeVec[n],TimeVec[n+1],y,par)
-                W[i,n] = model.BlockIncrementalWeight(J[A[i,n-1],n-1],Z[i,n],TimeVec[n-1],TimeVec[n],TimeVec[n+1],y,par,SampDenMat[i,n])
+                Z[i,n],SampDenMat[i,n] = model.GenZ(J[A[i,n-1],n-1],TimeVec[n-1],TimeVec[n],TimeVec[n+1],y,par,auxpar)
+                W[i,n] = model.BlockIncrementalWeight(J[A[i,n-1],n-1],Z[i,n],TimeVec[n-1],TimeVec[n],TimeVec[n+1],y,par,auxpar,SampDenMat[i,n])
                 J[i,n],_ = model.BlockAddPDMP(J[A[i,n-1],n-1],Z[i,n])
             end
             NW[:,n] = exp.(W[:,n] .- findmax(W[:,n])[1])/sum(exp.(W[:,n] .- findmax(W[:,n])[1]))
@@ -89,7 +89,7 @@ function TraceLineage(A,n)
     end
     return output
 end
-function BS(SMCR,y,TimeVec;model,par)
+function BS(SMCR,y,TimeVec;model,par,auxpar)
     N,T = size(SMCR.Weights)
     BSWeight = zeros(N,T)
     BSWeight[:,T] = SMCR.NWeights[:,T]
@@ -100,7 +100,7 @@ function BS(SMCR,y,TimeVec;model,par)
     L[T] = SMCR.Particles[ParticleIndex[T],T]
     for t = (T-1):-1:1
         for i = 1:N
-            BSWeight[i,t] = SMCR.Weights[i,t]+model.BlockBSIncrementalWeight(SMCR.PDMP[i,t],L[t+1],Laterξ,y,TimeVec[t],TimeVec[t+1],TimeVec[end],par)
+            BSWeight[i,t] = SMCR.Weights[i,t]+model.BlockBSIncrementalWeight(SMCR.PDMP[i,t],L[t+1],Laterξ,y,TimeVec[t],TimeVec[t+1],TimeVec[end],par,auxpar)
         end
         BSWeight[:,t] = exp.(BSWeight[:,t] .- findmax(BSWeight[:,t])[1] )
         BSWeight[:,t] = BSWeight[:,t] / sum(BSWeight[:,t])
@@ -130,6 +130,8 @@ end
     SMCN::Int64 = 100
     T::Vector{Float64}
     NFold::Int64 = 500
+    Globalalpha::Float64=0.3
+    Componentalpha::Float64=0.5
 end
 function LogPosteriorRatio(oldθ,newθ,process,y,End,model)
     newprior = model.logprior(newθ)
@@ -138,7 +140,7 @@ function LogPosteriorRatio(oldθ,newθ,process,y,End,model)
     oldllk   = model.JointDensity(process,y,0.0,End,model.convert_to_pars(oldθ))
     return newprior+newllk-oldprior-oldllk
 end
-function Tuneλ(oldθ,Z,λ0,γ;process,y,End,model)
+function Tuneλ(oldθ,Z,λ0,γ;process,y,End,model,args)
     newλ =zeros(length(λ0))
     k = length(λ0)
     E = Matrix{Float64}(I,k,k)
@@ -149,11 +151,11 @@ function Tuneλ(oldθ,Z,λ0,γ;process,y,End,model)
         else
             tempα    = min(1,exp(LogPosteriorRatio(oldθ,tempnewθ,process,y,End,model)))
         end
-        newλ[i]  = exp(log(λ0[i]) + γ*(tempα-0.234))
+        newλ[i]  = exp(log(λ0[i]) + γ*(tempα-args.Componentalpha))
     end
     return newλ
 end
-function TunePars(model,y,T;method,kws...)
+function TunePars(model,y,T;method,auxpar,kws...)
     args = PGargs(;dim=model.dim,T=T,kws...)
     if method == "Component"
         λmat = zeros(args.NAdapt+1,model.dim)
@@ -169,11 +171,11 @@ function TunePars(model,y,T;method,kws...)
     oldθ = rand.(model.prior)
     #oldθ = [0.0,2.0,2.0,10.0,10.0]
     oldpar = model.convert_to_pars(oldθ)
-    R = SMC(args.SMCAdaptN,args.T,y;model=model,par=oldpar)
-    BSR = BS(R,y,args.T,model=model,par=oldpar)
+    R = SMC(args.SMCAdaptN,args.T,y;model=model,par=oldpar,auxpar=auxpar)
+    BSR = BS(R,y,args.T,model=model,par=oldpar,auxpar=auxpar)
     Path = BSR.BackwardPath
     L = BSR.L
-    L = model.Rejuvenate(Path,args.T,oldpar)
+    L = model.Rejuvenate(Path,args.T,auxpar)
     # update
     @info "Tuning PG parameters..."
     @showprogress 1 for n = 1:args.NAdapt
@@ -196,9 +198,9 @@ function TunePars(model,y,T;method,kws...)
             α = 0.0
         end
         if method=="Component"
-            λmat[n+1,:] =Tuneλ(oldθ,Z,λmat[n,:],n^(-1/3),process=Path,y=y,End=args.T[end],model=model)
+            λmat[n+1,:] =Tuneλ(oldθ,Z,λmat[n,:],n^(-1/3),process=Path,y=y,End=args.T[end],model=model,args=args)
         else
-            λvec[n+1] = exp(log(λvec[n])+n^(-1/3)*(α - 0.234))
+            λvec[n+1] = exp(log(λvec[n])+n^(-1/3)*(α - args.Globalalpha))
         end
         Σ = Σ + n^(-1/3)*((oldθ.-μ)*transpose(oldθ.-μ)-Σ)+1e-10*I
         μ = μ .+ n^(-1/3)*(oldθ .- μ)
@@ -214,17 +216,19 @@ function TunePars(model,y,T;method,kws...)
             println("lambda = ",λvec[n+1])
         end
         """
-        R = cSMC(L,args.SMCAdaptN,args.T,y,model=model,par=oldpar)
-        BSR = BS(R,y,args.T,model=model,par=oldpar)
+        R = cSMC(L,args.SMCAdaptN,args.T,y,model=model,par=oldpar,auxpar=auxpar)
+        BSR = BS(R,y,args.T,model=model,par=oldpar,auxpar=auxpar)
         Path = BSR.BackwardPath
+        #push!(K,Path.K)
+        #println("K=",Path.K,"llk=",model.JointDensity(Path,y,0.0,args.T[end],model.convert_to_pars(oldθ)))
         #println("No. Jumps = ",Path.K,"New Density = ",model.JointDensity(Path,y,0.0,args.T[end],oldpar))
         L = BSR.L
-        L = model.Rejuvenate(Path,args.T,oldpar)
+        L = model.Rejuvenate(Path,args.T,auxpar)
     end
     if method == "Component"
-        return (λmat[end,:],Σ)
+        return (λmat[end,:],Σ,oldθ)
     else
-        return (λvec[end],Σ)
+        return (λvec[end],Σ,oldθ)
     end
 end
 function MH(θ0,Process,y,NIter;method,model,T,λ,Σ)
@@ -256,25 +260,34 @@ function MH(θ0,Process,y,NIter;method,model,T,λ,Σ)
     end
     return oldθ
 end
-function PG(model,y,T;method,kws...)
+function PG(model,y,T;proppar=nothing,θ0=nothing,auxpar=[3.0,0.5],method="Global",kws...)
     args = PGargs(;dim=model.dim,T=T,kws...)
     θ = zeros(args.NBurn+args.NChain+1,args.dim)
-    λ,Σ = TunePars(model,y,T;method=method,kws...)
-    θ[1,:] = rand.(model.prior)
+    if isnothing(proppar)
+        λ,Σ,θ0 = TunePars(model,y,T;method=method,auxpar=auxpar,kws...)
+    else
+        λ,Σ = proppar
+    end
+    println("θ0 is",θ0)
+    if isnothing(θ0)
+        θ[1,:] = rand.(model.prior)
+    else
+        θ[1,:] = θ0
+    end
     oldpar = model.convert_to_pars(θ[1,:])
-    R = SMC(args.SMCN,args.T,y;model=model,par=oldpar)
-    BSR = BS(R,y,args.T,model=model,par=oldpar)
+    R = SMC(args.SMCN,args.T,y;model=model,par=oldpar,auxpar=auxpar)
+    BSR = BS(R,y,args.T,model=model,par=oldpar,auxpar=auxpar)
     Path = BSR.BackwardPath
     L = BSR.L
-    L = model.Rejuvenate(Path,args.T,oldpar)
+    L = model.Rejuvenate(Path,args.T,auxpar)
     @info "Running PG algorithms..."
     @showprogress 1 for n = 1:(args.NBurn+args.NChain)
         θ[n+1,:] = MH(θ[n,:],Path,y,args.NFold,method=method,model=model,T=T[end],λ=λ,Σ=Σ)
-        R = cSMC(L,args.SMCN,args.T,y,model=model,par=model.convert_to_pars(θ[n+1,:]))
-        BSR = BS(R,y,args.T,model=model,par=model.convert_to_pars(θ[n+1,:]))
+        R = cSMC(L,args.SMCN,args.T,y,model=model,par=model.convert_to_pars(θ[n+1,:]),auxpar=auxpar)
+        BSR = BS(R,y,args.T,model=model,par=model.convert_to_pars(θ[n+1,:]),auxpar=auxpar)
         Path = BSR.BackwardPath
         L = BSR.L
-        L = model.Rejuvenate(Path,args.T,model.convert_to_pars(θ[n+1,:]))
+        L = model.Rejuvenate(Path,args.T,auxpar)
     end
     return θ[(args.NBurn+2):end,:]
 end

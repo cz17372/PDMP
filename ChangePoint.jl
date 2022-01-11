@@ -9,7 +9,7 @@ dim = 5
 @kwdef mutable struct pars
     ρ::Float64 = 0.9
     σϕ::Float64 = 1.0
-    σy::Float64 = sqrt(0.5)
+    σy::Float64 = 0.75
     α::Float64 = 4.0
     β::Float64 = 10.0
 end
@@ -35,6 +35,7 @@ end
 function SimData(;seed=12345,T=1000.0,dt=1,kws...)
     Random.seed!(seed)
     par = pars(;kws...)
+    println(par)
     IJ = Gamma(par.α,par.β)
     ϵϕ = Normal(0,par.σϕ)
     # Generate the jump times
@@ -61,13 +62,13 @@ function SimData(;seed=12345,T=1000.0,dt=1,kws...)
     y = rand.(Normal.(meanvec,par.σy))
     return (PDMP(length(JumpTimes)-1,JumpTimes,PhiVecs),obs(timevec,y))
 end
-function ProcObsGraph(proc,y;proclabel="",obslabel="",xlab="Time",ylab="\\xi")
+function ProcObsGraph(proc,y;kws...)
     T = y.t[end]
-    scatter(y.t,y.y,label=obslabel,color=:grey,markersize=2.0,markerstrokewidth=0,xlabel=xlab,ylabel=ylab)
+    scatter(y.t,y.y,color=:grey,markersize=2.0,markerstrokewidth=0;kws...)
     for i = 1:(length(proc.τ)-1)
         plot!(proc.τ[i:(i+1)],repeat([proc.ϕ[i]],2),label="",color=:red,linewidth=2.0)
     end
-    plot!([proc.τ[end],T],repeat([proc.ϕ[end]],2),label=proclabel,color=:red,linewidth=2.0)
+    plot!([proc.τ[end],T],repeat([proc.ϕ[end]],2),label="",color=:red,linewidth=2.0)
 end
 function PlotPDMP(graph,Path,End;color=:green)
     extendedτ = [Path.τ;[1000]]
@@ -262,12 +263,12 @@ function μ(m,t0,t1,J1)
         return log(0.5)
     end
 end
-function λ(ubar,t0,t1,J1,par)
+function λ(ubar,t0,t1,J1,auxpar)
     if isnothing(ubar.tau)
         return 0.0
     else
         ind = findlast(J1.τ .<= t1)
-        llk = logpdf(Normal(J1.ϕ[ind],par.σϕ),ubar.phi) + logpdf(truncated(Normal(J1.τ[ind],par.α*par.β/20.0) ,max(t0,J1.τ[ind-1]),t1),ubar.tau)
+        llk = logpdf(Normal(J1.ϕ[ind],auxpar[2]),ubar.phi) + logpdf(truncated(Normal(J1.τ[ind],auxpar[1]) ,max(t0,J1.τ[ind-1]),t1),ubar.tau)
         return llk
     end
 end       
@@ -277,8 +278,7 @@ mutable struct Z
     phim::Any
     X::PDMP
 end
-function GenZ(J0,t0,t1,t2,y,par)
-    modσ = par.α*par.β/20.0
+function GenZ(J0,t0,t1,t2,y,par,auxpar)
     llk = 0.0
     # Generate jump times in [t1,t2] 
     MeanJumpTime = (t2-t1)/(par.α*par.β)
@@ -300,8 +300,8 @@ function GenZ(J0,t0,t1,t2,y,par)
         if J0.τ[end] <= t0
             taum = nothing
         else
-            taum = rand(truncated(Normal(J0.τ[end],modσ),max(t0,J0.τ[end-1]),t1))
-            llk += logpdf(truncated(Normal(J0.τ[end],modσ),max(t0,J0.τ[end-1]),t1),taum)
+            taum = rand(truncated(Normal(J0.τ[end],auxpar[1]),max(t0,J0.τ[end-1]),t1))
+            llk += logpdf(truncated(Normal(J0.τ[end],auxpar[1]),max(t0,J0.τ[end-1]),t1),taum)
         end
     end
     # Generate ϕm
@@ -342,8 +342,7 @@ function GenZ(J0,t0,t1,t2,y,par)
     end
     return (Z(M,taum,phim,ChangePoint.PDMP(K,τ,ϕ)),llk)
 end
-function ProposedZDendity(Z,J0,t0,t1,t2,y,par)
-    modσ = par.α*par.β/20.0
+function ProposedZDendity(Z,J0,t0,t1,t2,y,par,auxpar)
     llk = 0.0
     MeanJumpTime = (t2-t1)/(par.α*par.β)
     llk += logpdf(Poisson(MeanJumpTime),Z.X.K)
@@ -359,7 +358,7 @@ function ProposedZDendity(Z,J0,t0,t1,t2,y,par)
         if J0.τ[end] <= t0
             llk += 0
         else
-            llk += logpdf(truncated(Normal(J0.τ[end],modσ),max(t0,J0.τ[end-1]),t1),Z.taum)
+            llk += logpdf(truncated(Normal(J0.τ[end],auxpar[1]),max(t0,J0.τ[end-1]),t1),Z.taum)
         end
     end
     if isnothing(Z.taum)
@@ -416,7 +415,7 @@ function BlockAddPDMP(J0,Z)
     end
     return (PDMP(K,tau,phi),ubar)
 end
-function BlockIncrementalWeight(J0,Z,t0,t1,t2,y,par,propdensity)
+function BlockIncrementalWeight(J0,Z,t0,t1,t2,y,par,auxpar,propdensity)
     IJ = Gamma(par.α,par.β)
     # Calculate the density ratio related to τ's 
     J1,ubar = BlockAddPDMP(J0,Z)
@@ -454,10 +453,10 @@ function BlockIncrementalWeight(J0,Z,t0,t1,t2,y,par,propdensity)
         end
     end
     mu = μ(Z.M,t0,t1,J1)
-    lambda   = λ(ubar,t0,t1,J1,par)
+    lambda   = λ(ubar,t0,t1,J1,auxpar)
     return logS + logτ + logϕ + llk + propdensity + mu + lambda
 end
-function Rejuvenate(J,T,par)
+function Rejuvenate(J,T,auxpar)
     P = length(T)-1
     Z0 = Vector{Any}(undef,P)
     X = Vector{Any}(undef,P)
@@ -482,8 +481,8 @@ function Rejuvenate(J,T,par)
         else
             prevtau = J.τ[findlast(J.τ .< temptau[end])]
             prevphi = J.ϕ[findlast(J.τ .< temptau[end])]
-            taubar = rand(truncated(Normal(temptau[end],par.α*par.β/20.0),max(T[n],prevtau),T[n+1]))
-            phibar = rand(Normal(prevphi,par.σϕ))
+            taubar = rand(truncated(Normal(temptau[end],auxpar[1]),max(T[n],prevtau),T[n+1]))
+            phibar = rand(Normal(prevphi,auxpar[2]))
             X[n] = PDMP(length(temptau)-1,[temptau[1:end-1];[taubar]],[tempphi[1:end-1];[phibar]])
             U[n,:] = [temptau[end],tempphi[end]]
         end
@@ -506,8 +505,8 @@ function Rejuvenate(J,T,par)
             else
                 prevtau = J.τ[findlast(J.τ .< temptau[end])]
                 prevphi = J.ϕ[findlast(J.τ .< temptau[end])]
-                taubar = rand(truncated(Normal(temptau[end],par.α*par.β/10.0),max(T[n],prevtau),T[n+1]))
-                phibar = rand(Normal(prevphi,par.σϕ))
+                taubar = rand(truncated(Normal(temptau[end],auxpar[1]),max(T[n],prevtau),T[n+1]))
+                phibar = rand(Normal(prevphi,auxpar[2]))
                 X[n] = PDMP(length(temptau),[temptau[1:end-1];[taubar]],[tempphi[1:end-1];[phibar]])
                 U[n,:] = [temptau[end],tempphi[end]]
             end
@@ -522,15 +521,15 @@ function Rejuvenate(J,T,par)
     end
     return Z0
 end
-function BlockBSIncrementalWeight(J0,Zstar,J1,y,t0,t1,tP,par)
+function BlockBSIncrementalWeight(J0,Zstar,J1,y,t0,t1,tP,par,auxpar)
     IJ = Gamma(par.α,par.β)
     if Zstar.M == 1
-        if J0.τ[end] > Zstar.taum
+        if J0.τ[end] >= Zstar.taum
             return -Inf
         else
             NewJ = PDMP(J0.K+1+J1.K,[J0.τ;[Zstar.taum];J1.τ],[J0.ϕ;[Zstar.phim];J1.ϕ])
             logμ = μ(Zstar.M,t0,t1,NewJ)
-            logλ = λ((tau=nothing,phi=nothing),t0,t1,NewJ,par)
+            logλ = λ((tau=nothing,phi=nothing),t0,t1,NewJ,auxpar)
             logτ = logpdf(IJ,Zstar.taum-J0.τ[end])
             logϕ = logpdf(Normal(par.ρ*J0.ϕ[end],par.σϕ),Zstar.phim)
             llk  = -CalLlk(J0,y,Zstar.taum,t1,par)
@@ -546,7 +545,7 @@ function BlockBSIncrementalWeight(J0,Zstar,J1,y,t0,t1,tP,par)
             else
                 NewJ = PDMP(J0.K + J1.K,[J0.τ;J1.τ],[J0.ϕ;J1.ϕ])
                 logμ = μ(Zstar.M,t0,t1,NewJ)
-                logλ = λ((tau=nothing,phi=nothing),t0,t1,NewJ,par)
+                logλ = λ((tau=nothing,phi=nothing),t0,t1,NewJ,auxpar)
                 if J1.K == 0
                     logτ = 0.0
                     logϕ = 0.0
@@ -568,7 +567,7 @@ function BlockBSIncrementalWeight(J0,Zstar,J1,y,t0,t1,tP,par)
             else
                 NewJ = PDMP(J0.K + J1.K,[J0.τ[1:end-1];[Zstar.taum];J1.τ],[J0.ϕ[1:end-1];[Zstar.phim];J1.ϕ])
                 logμ = μ(Zstar.M,t0,t1,NewJ)
-                logλ = λ((tau=J0.τ[end],phi=J0.ϕ[end]),t0,t1,NewJ,par)
+                logλ = λ((tau=J0.τ[end],phi=J0.ϕ[end]),t0,t1,NewJ,auxpar)
                 logτ = logpdf(IJ,Zstar.taum-J0.τ[end-1]) - logpdf(IJ,J0.τ[end]-J0.τ[end-1])
                 logS = - logccdf(IJ,t1-J0.τ[end])
                 logϕ = logpdf(Normal(par.ρ*J0.ϕ[end-1],par.σϕ),Zstar.phim) - logpdf(Normal(par.ρ*J0.ϕ[end-1],par.σϕ),J0.ϕ[end])
