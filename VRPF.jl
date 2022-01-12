@@ -116,6 +116,7 @@ end
     NFold::Int64 = 500
     Globalalpha::Float64 = 0.25
     Componentalpha::Float64 = 0.5
+    NIter::Int64 = 250000
 end
 function LogPosteriorRatio(oldθ,newθ,process,y,End,model)
     newprior = model.logprior(newθ)
@@ -185,12 +186,12 @@ function TunePars(model,y,T;method,kws...)
         else
             λvec[n+1] = exp(log(λvec[n])+n^(-1/3)*(α - args.Globalalpha))
         end
-        Σ = Σ + n^(-1/3)*((oldθ.-μ)*transpose(oldθ.-μ)-Σ)+1e-10*I
-        μ = μ .+ n^(-1/3)*(oldθ .- μ)
         if rand() < α
             oldpar = newpar
             oldθ = newθ
         end
+        Σ = Σ + n^(-1/3)*((oldθ.-μ)*transpose(oldθ.-μ)-Σ)+1e-10*I
+        μ = μ .+ n^(-1/3)*(oldθ .- μ)
         #println(oldθ)
         """
         if method == "Component"
@@ -268,5 +269,79 @@ function PG(model,y,T;proppar=nothing,θ0=nothing,method="Global",kws...)
         L = BSR.L
     end
     return θ[(args.NBurn+2):end,:]
+end
+function APG(model,y,T;method,θ0=nothing,kws...)
+    args = PGargs(;dim=model.dim,T=T,kws...)
+    if method == "Component"
+        λmat = zeros(args.NIter+1,model.dim)
+        λmat[1,:] = args.λ0 * ones(args.dim)
+    else
+        λvec = zeros(args.NIter+1)
+        λvec[1] = args.λ0
+    end
+    Σ    = args.Σ0
+    μ    = args.μ0
+    θ = zeros(args.NIter+1,args.dim)
+    # initialise 
+    if isnothing(θ0)
+        θ[1,:] = rand.(model.prior)
+    else
+        θ[1,:] = θ0
+    end
+    oldpar = model.convert_to_pars(θ[1,:])
+    R = SMC(args.SMCN,args.T,y;model=model,par=oldpar)
+    BSR = BS(R,y,args.T,model=model,par=oldpar)
+    Path = BSR.BackwardPath
+    L = BSR.L
+    # update
+    @info "Tuning PG parameters..."
+    @showprogress 1 for n = 1:args.NIter
+        # Propose new parameters
+        if method == "Component"
+            Λ = Matrix{Float64}(Diagonal(sqrt.(λmat[n,:])))
+            vars = Λ*cholesky(Σ).L; vars = vars*transpose(vars)
+            Z = rand(MultivariateNormal(zeros(args.dim),vars))
+        else
+            Z = rand(MultivariateNormal(zeros(args.dim),λvec[n]*Σ))
+        end
+        newθ = θ[n,:].+Z
+        newpar = model.convert_to_pars(newθ)
+        if model.logprior(newθ) > -Inf
+            LLkRatio = LogPosteriorRatio(θ[n,:],newθ,Path,y,args.T[end],model)
+            α = min(1,exp(LLkRatio))
+            #println("density of old is",model.JointDensity(Path,y,0.0,args.T[end],oldpar))
+            #println("density of new is",model.JointDensity(Path,y,0.0,args.T[end],newpar))
+        else
+            α = 0.0
+        end
+        if method=="Component"
+            λmat[n+1,:] =Tuneλ(θ[n,:],Z,λmat[n,:],n^(-1/3),process=Path,y=y,End=args.T[end],model=model,args=args)
+        else
+            λvec[n+1] = exp(log(λvec[n])+n^(-1/3)*(α - args.Globalalpha))
+        end
+        if rand() < α
+            oldpar = newpar
+            θ[n+1,:] = newθ
+        else
+            θ[n+1,:] = θ[n,:]
+        end
+        Σ = Σ + n^(-1/3)*((θ[n+1,:].-μ)*transpose(θ[n+1,:].-μ)-Σ)+1e-10*I
+        μ = μ .+ n^(-1/3)*(θ[n+1,:] .- μ)
+        #println(θ[n+1,:])
+        """
+        if method == "Component"
+            println("lambda = ",λmat[n+1,:])
+        else
+            println("lambda = ",λvec[n+1])
+        end
+        """
+        R = cSMC(L,args.SMCN,args.T,y,model=model,par=oldpar)
+        BSR = BS(R,y,args.T,model=model,par=oldpar)
+        Path = BSR.BackwardPath
+        #println("K=",Path.K,"llk=",model.JointDensity(Path,y,0.0,args.T[end],model.convert_to_pars(oldθ)))
+        #println("No. Jumps = ",Path.K,"New Density = ",model.JointDensity(Path,y,0.0,args.T[end],oldpar))
+        L = BSR.L
+    end
+    return θ
 end
 end

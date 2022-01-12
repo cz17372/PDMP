@@ -202,13 +202,12 @@ function TunePars(model,y,T;method,auxpar,kws...)
         else
             λvec[n+1] = exp(log(λvec[n])+n^(-1/3)*(α - args.Globalalpha))
         end
-        Σ = Σ + n^(-1/3)*((oldθ.-μ)*transpose(oldθ.-μ)-Σ)+1e-10*I
-        μ = μ .+ n^(-1/3)*(oldθ .- μ)
         if rand() < α
             oldpar = newpar
             oldθ = newθ
         end
-        #println(oldθ)
+        Σ = Σ + n^(-1/3)*((oldθ.-μ)*transpose(oldθ.-μ)-Σ)+1e-10*I
+        μ = μ .+ n^(-1/3)*(oldθ .- μ)
         """
         if method == "Component"
             println("lambda = ",λmat[n+1,:])

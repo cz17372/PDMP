@@ -145,7 +145,7 @@ function CalSampDen(X,Start,End,y,par)
     for i = 1:length(X.ϕ)
         partialy = y.y[extendedτ[i] .< y.t .<= extendedτ[i+1]]
         μ = (par.ρ*par.σy^2*prevϕ+par.σϕ^2*sum(partialy))/(par.σy^2 + length(partialy)*par.σϕ^2)
-        sd = par.σϕ*par.σy/sqrt(par.σϕ^2 + par.σy^2)
+        sd = par.σϕ*par.σy/sqrt(length(partialy)*par.σϕ^2 + par.σy^2)
         llk += logpdf(Normal(μ,sd),X.ϕ[i])
         prevϕ = X.ϕ[i]
     end
@@ -162,7 +162,7 @@ function CalSampDen(X,Start,End,J0,y,par)
         # Find the observations that 
         partialy = y.y[extendedτ[i] .< y.t .<= extendedτ[i+1]]
         μ = (par.ρ*par.σy^2*prevϕ+par.σϕ^2*sum(partialy))/(par.σy^2 + length(partialy)*par.σϕ^2)
-        sd = par.σϕ*par.σy/sqrt(par.σϕ^2 + par.σy^2)
+        sd = par.σϕ*par.σy/sqrt(length(partialy)*par.σϕ^2 + par.σy^2)
         llk += logpdf(Normal(μ,sd),X.ϕ[i])
         prevϕ = X.ϕ[i]
     end
@@ -454,7 +454,7 @@ function BlockIncrementalWeight(J0,Z,t0,t1,t2,y,par,auxpar,propdensity)
     end
     mu = μ(Z.M,t0,t1,J1)
     lambda   = λ(ubar,t0,t1,J1,auxpar)
-    return logS + logτ + logϕ + llk + propdensity + mu + lambda
+    return logS + logτ + logϕ + llk - propdensity + mu + lambda
 end
 function Rejuvenate(J,T,auxpar)
     P = length(T)-1
