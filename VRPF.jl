@@ -63,8 +63,8 @@ function cSMC(L,N,TimeVec,y;model,par)
     end
     NW[:,1] = exp.(W[:,1] .- findmax(W[:,1])[1])/sum(exp.(W[:,1] .- findmax(W[:,1])[1]))
     for n = 2:T
+        A[2:N,n-1] = sample(1:N,Weights(NW[:,n-1]),N)
         A[1,n-1] = 1
-        A[2:N,n-1] = sample(1:N,Weights(NW[:,n-1]),N-1)
         for i = 1:N
             if i == 1
                 X[i,n] = L[n]
