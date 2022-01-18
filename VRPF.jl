@@ -140,7 +140,7 @@ function Tuneλ(oldθ,Z,λ0,γ;process,y,End,model,args)
     end
     return newλ
 end
-function TunePars(model,y,T;method,kws...)
+function TunePars(model,y,T;method,θ0,kws...)
     args = PGargs(;dim=model.dim,T=T,kws...)
     if method == "Component"
         λmat = zeros(args.NAdapt+1,model.dim)
@@ -153,7 +153,12 @@ function TunePars(model,y,T;method,kws...)
     μ    = args.μ0
     
     # initialise 
-    oldθ = rand.(model.prior)
+    if isnothing(θ0)
+        oldθ = rand.(model.prior)
+    else
+        oldθ =θ0
+    end
+    println("Initial θ = ",oldθ)
     #oldθ = [0.0,2.0,2.0,10.0,10.0]
     oldpar = model.convert_to_pars(oldθ)
     R = SMC(args.SMCAdaptN,args.T,y;model=model,par=oldpar)
@@ -192,7 +197,6 @@ function TunePars(model,y,T;method,kws...)
         end
         Σ = Σ + n^(-1/3)*((oldθ.-μ)*transpose(oldθ.-μ)-Σ)+1e-10*I
         μ = μ .+ n^(-1/3)*(oldθ .- μ)
-        #println(oldθ)
         """
         if method == "Component"
             println("lambda = ",λmat[n+1,:])
@@ -246,7 +250,7 @@ function PG(model,y,T;proppar=nothing,θ0=nothing,method="Global",kws...)
     args = PGargs(;dim=model.dim,T=T,kws...)
     θ = zeros(args.NBurn+args.NChain+1,args.dim)
     if isnothing(proppar)
-        λ,Σ,θ0 = TunePars(model,y,T;method=method,kws...)
+        λ,Σ,θ0 = TunePars(model,y,T;method=method,θ0=θ0,kws...)
     else
         λ,Σ = proppar
     end
