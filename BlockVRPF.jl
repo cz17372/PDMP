@@ -75,8 +75,8 @@ function cSMC(L,N,TimeVec,y;model,par,auxpar)
                 W[i,n] = model.BlockIncrementalWeight(J[A[i,n-1],n-1],Z[i,n],TimeVec[n-1],TimeVec[n],TimeVec[n+1],y,par,auxpar,SampDenMat[i,n])
                 J[i,n],_ = model.BlockAddPDMP(J[A[i,n-1],n-1],Z[i,n])
             end
-            NW[:,n] = exp.(W[:,n] .- findmax(W[:,n])[1])/sum(exp.(W[:,n] .- findmax(W[:,n])[1]))
         end
+        NW[:,n] = exp.(W[:,n] .- findmax(W[:,n])[1])/sum(exp.(W[:,n] .- findmax(W[:,n])[1]))
     end
     return SMCRes(Z,J,W,NW,A)
 end
