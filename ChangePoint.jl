@@ -482,7 +482,7 @@ function Rejuvenate(J,T,auxpar)
             prevtau = J.τ[findlast(J.τ .< temptau[end])]
             prevphi = J.ϕ[findlast(J.τ .< temptau[end])]
             taubar = rand(truncated(Normal(temptau[end],auxpar[1]),max(T[n],prevtau),T[n+1]))
-            phibar = rand(Normal(prevphi,auxpar[2]))
+            phibar = rand(Normal(tempphi[end],auxpar[2]))
             X[n] = PDMP(length(temptau)-1,[temptau[1:end-1];[taubar]],[tempphi[1:end-1];[phibar]])
             U[n,:] = [temptau[end],tempphi[end]]
         end
@@ -506,7 +506,7 @@ function Rejuvenate(J,T,auxpar)
                 prevtau = J.τ[findlast(J.τ .< temptau[end])]
                 prevphi = J.ϕ[findlast(J.τ .< temptau[end])]
                 taubar = rand(truncated(Normal(temptau[end],auxpar[1]),max(T[n],prevtau),T[n+1]))
-                phibar = rand(Normal(prevphi,auxpar[2]))
+                phibar = rand(Normal(tempphi[end],auxpar[2]))
                 X[n] = PDMP(length(temptau),[temptau[1:end-1];[taubar]],[tempphi[1:end-1];[phibar]])
                 U[n,:] = [temptau[end],tempphi[end]]
             end

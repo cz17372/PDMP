@@ -158,7 +158,6 @@ function TunePars(model,y,T;method,θ0,kws...)
     else
         oldθ =θ0
     end
-    println("Initial θ = ",oldθ)
     #oldθ = [0.0,2.0,2.0,10.0,10.0]
     oldpar = model.convert_to_pars(oldθ)
     R = SMC(args.SMCAdaptN,args.T,y;model=model,par=oldpar)
