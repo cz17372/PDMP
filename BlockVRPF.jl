@@ -41,7 +41,7 @@ function SMC(N,TimeVec,y;model,par,auxpar)
             W[i,n] = model.BlockIncrementalWeight(J[A[i,n-1],n-1],Z[i,n],TimeVec[n-1],TimeVec[n],TimeVec[n+1],y,par,auxpar,SampDenMat[i,n])
             J[i,n],_ = model.BlockAddPDMP(J[A[i,n-1],n-1],Z[i,n])
         end
-        MAX,ind = findmax(W[:,1])
+        MAX,ind = findmax(W[:,n])
         NW[:,n] = exp.(W[:,n] .- MAX)
         NW[:,n] = NW[:,n]/sum(NW[:,n])
         if any(isnan.(NW[:,n]))
@@ -94,7 +94,7 @@ function cSMC(L,N,TimeVec,y;model,par,auxpar)
                 J[i,n],_ = model.BlockAddPDMP(J[A[i,n-1],n-1],Z[i,n])
             end
         end
-        MAX,ind = findmax(W[:,1])
+        MAX,ind = findmax(W[:,n])
         NW[:,n] = exp.(W[:,n] .- MAX)
         NW[:,n] = NW[:,n]/sum(NW[:,n])
         if any(isnan.(NW[:,n]))
