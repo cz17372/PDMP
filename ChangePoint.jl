@@ -356,7 +356,7 @@ function ProposedZDendity(Z,J0,t0,t1,t2,y,par,auxpar)
         llk += logpdf(Uniform(max(t0,J0.τ[end]),t1),Z.taum)
     else
         if J0.τ[end] <= t0
-            llk += 0
+            llk += 0.0
         else
             llk += logpdf(truncated(Normal(J0.τ[end],auxpar[1]),max(t0,J0.τ[end-1]),t1),Z.taum)
         end
