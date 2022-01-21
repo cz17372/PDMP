@@ -27,9 +27,11 @@ function SMC(N,TimeVec,y;model,par,auxpar)
         J[i,1] = Z[i,1].X
         W[i,1] = model.JointDensity(J[i,1],y,TimeVec[1],TimeVec[2],par) - SampDenMat[i,1]
     end
-    if isnan(findmax(W[:,n])[1])
+    if isnan(findmax(W[:,1])[1])
+        println(Z[findmax(W[:,1])[2],1])
         throw("Log Weights have NaN")
-    elseif isinf(findmax(W[:,n])[1])
+    elseif isinf(findmax(W[:,1])[1])
+        println(Z[findmax(W[:,1])[2],1])
         throw("Log weights have inf")
     end
     NW[:,1] = exp.(W[:,1] .- findmax(W[:,1])[1])/sum(exp.(W[:,1] .- findmax(W[:,1])[1]))
@@ -41,8 +43,12 @@ function SMC(N,TimeVec,y;model,par,auxpar)
             J[i,n],_ = model.BlockAddPDMP(J[A[i,n-1],n-1],Z[i,n])
         end
         if isnan(findmax(W[:,n])[1])
+            println(Z[findmax(W[:,n])[2],n])
+            println(J[A[findmax(W[:,n])[2],n-1],n-1])
             throw("Log Weights have NaN")
         elseif isinf(findmax(W[:,n])[1])
+            println(Z[findmax(W[:,n])[2],n])
+            println(J[A[findmax(W[:,n])[2],n-1],n-1])
             throw("Log weights have inf")
         end
         NW[:,n] = exp.(W[:,n] .- findmax(W[:,n])[1])/sum(exp.(W[:,n] .- findmax(W[:,n])[1]))
@@ -70,9 +76,11 @@ function cSMC(L,N,TimeVec,y;model,par,auxpar)
             W[i,1] = model.JointDensity(J[i,1],y,TimeVec[1],TimeVec[2],par) - SampDenMat[i,1]
         end
     end
-    if isnan(findmax(W[:,n])[1])
-        throw("Log Weights have NaN")
-    elseif isinf(findmax(W[:,n])[1])
+    if isnan(findmax(W[:,1])[1])
+        println(Z[findmax(W[:,1])[2],1])
+        throw("Log Weights have NaN")  
+    elseif isinf(findmax(W[:,1])[1])
+        println(Z[findmax(W[:,1])[2],1])
         throw("Log weights have inf")
     end
     NW[:,1] = exp.(W[:,1] .- findmax(W[:,1])[1])/sum(exp.(W[:,1] .- findmax(W[:,1])[1]))
@@ -92,8 +100,12 @@ function cSMC(L,N,TimeVec,y;model,par,auxpar)
             end
         end
         if isnan(findmax(W[:,n])[1])
+            println(Z[findmax(W[:,n])[2],n])
+            println(J[A[findmax(W[:,n])[2],n-1],n-1])
             throw("Log Weights have NaN")
         elseif isinf(findmax(W[:,n])[1])
+            println(Z[findmax(W[:,n])[2],n])
+            println(J[A[findmax(W[:,n])[2],n-1],n-1])
             throw("Log weights have inf")
         end
         NW[:,n] = exp.(W[:,n] .- findmax(W[:,n])[1])/sum(exp.(W[:,n] .- findmax(W[:,n])[1]))
