@@ -1,5 +1,5 @@
 module BlockVRPF
-using Distributions, StatsBase, Random, LinearAlgebra, ProgressMeter
+using Distributions, StatsBase, Random, LinearAlgebra, ProgressMeter,JLD2
 using Base:@kwdef
 mutable struct SMCRes
     Particles::Matrix{Any}
@@ -27,31 +27,33 @@ function SMC(N,TimeVec,y;model,par,auxpar)
         J[i,1] = Z[i,1].X
         W[i,1] = model.JointDensity(J[i,1],y,TimeVec[1],TimeVec[2],par) - SampDenMat[i,1]
     end
-    if isnan(findmax(W[:,1])[1])
-        println(Z[findmax(W[:,1])[2],1])
+    MAX,ind = findmax(W[:,1])
+    if isnan(MAX)
+        @save "error.jld2" Z[ind,1] par n
         throw("Log Weights have NaN")
-    elseif isinf(findmax(W[:,1])[1])
-        println(Z[findmax(W[:,1])[2],1])
+    elseif isinf(MAX)
+        @save "error.jld2" Z[ind,1] par n
         throw("Log weights have inf")
     end
-    NW[:,1] = exp.(W[:,1] .- findmax(W[:,1])[1])/sum(exp.(W[:,1] .- findmax(W[:,1])[1]))
+    NW[:,1] = exp.(W[:,1] .- MAX)
+    NW[:,1] = NW[:,1]/sum(NW[:,1])
     for n = 2:T
-        A[:,n-1] = sample(1:N,Weights(NW[:,n-1]),N)
+        A[:,n-1] = vcat(fill.(1:N,rand(Multinomial(N,NW[:,n-1])))...)
         for i = 1:N
             Z[i,n],SampDenMat[i,n] = model.GenZ(J[A[i,n-1],n-1],TimeVec[n-1],TimeVec[n],TimeVec[n+1],y,par,auxpar)
             W[i,n] = model.BlockIncrementalWeight(J[A[i,n-1],n-1],Z[i,n],TimeVec[n-1],TimeVec[n],TimeVec[n+1],y,par,auxpar,SampDenMat[i,n])
             J[i,n],_ = model.BlockAddPDMP(J[A[i,n-1],n-1],Z[i,n])
         end
-        if isnan(findmax(W[:,n])[1])
-            println(Z[findmax(W[:,n])[2],n])
-            println(J[A[findmax(W[:,n])[2],n-1],n-1])
+        MAX,ind = findmax(W[:,1])
+        if isnan(MAX)
+            @save "error.jld2" Z[ind,n] J[A[ind,n-1],n-1] par n
             throw("Log Weights have NaN")
-        elseif isinf(findmax(W[:,n])[1])
-            println(Z[findmax(W[:,n])[2],n])
-            println(J[A[findmax(W[:,n])[2],n-1],n-1])
+        elseif isinf(MAX)
+            @save "error.jld2" Z[ind,n] J[A[ind,n-1],n-1] par n
             throw("Log weights have inf")
         end
-        NW[:,n] = exp.(W[:,n] .- findmax(W[:,n])[1])/sum(exp.(W[:,n] .- findmax(W[:,n])[1]))
+        NW[:,n] = exp.(W[:,n] .- MAX)
+        NW[:,n] = NW[:,n]/sum(NW[:,n])
     end
     return SMCRes(Z,J,W,NW,A)
 end
@@ -76,16 +78,18 @@ function cSMC(L,N,TimeVec,y;model,par,auxpar)
             W[i,1] = model.JointDensity(J[i,1],y,TimeVec[1],TimeVec[2],par) - SampDenMat[i,1]
         end
     end
-    if isnan(findmax(W[:,1])[1])
-        println(Z[findmax(W[:,1])[2],1])
-        throw("Log Weights have NaN")  
-    elseif isinf(findmax(W[:,1])[1])
-        println(Z[findmax(W[:,1])[2],1])
+    MAX,ind = findmax(W[:,1])
+    if isnan(MAX)
+        @save "error.jld2" Z[ind,1] par n
+        throw("Log Weights have NaN")
+    elseif isinf(MAX)
+        @save "error.jld2" Z[ind,1] par n
         throw("Log weights have inf")
     end
-    NW[:,1] = exp.(W[:,1] .- findmax(W[:,1])[1])/sum(exp.(W[:,1] .- findmax(W[:,1])[1]))
+    NW[:,1] = exp.(W[:,1] .- MAX)
+    NW[:,1] = NW[:,1]/sum(NW[:,1])
     for n = 2:T
-        A[:,n-1] = sample(1:N,Weights(NW[:,n-1]),N)
+        A[:,n-1] = vcat(fill.(1:N,rand(Multinomial(N,NW[:,n-1])))...)
         A[1,n-1] = 1
         for i = 1:N
             if i == 1
@@ -99,16 +103,16 @@ function cSMC(L,N,TimeVec,y;model,par,auxpar)
                 J[i,n],_ = model.BlockAddPDMP(J[A[i,n-1],n-1],Z[i,n])
             end
         end
-        if isnan(findmax(W[:,n])[1])
-            println(Z[findmax(W[:,n])[2],n])
-            println(J[A[findmax(W[:,n])[2],n-1],n-1])
+        MAX,ind = findmax(W[:,1])
+        if isnan(MAX)
+            @save "error.jld2" Z[ind,n] J[A[ind,n-1],n-1] par n
             throw("Log Weights have NaN")
-        elseif isinf(findmax(W[:,n])[1])
-            println(Z[findmax(W[:,n])[2],n])
-            println(J[A[findmax(W[:,n])[2],n-1],n-1])
+        elseif isinf(MAX)
+            @save "error.jld2" Z[ind,n] J[A[ind,n-1],n-1] par n
             throw("Log weights have inf")
         end
-        NW[:,n] = exp.(W[:,n] .- findmax(W[:,n])[1])/sum(exp.(W[:,n] .- findmax(W[:,n])[1]))
+        NW[:,n] = exp.(W[:,n] .- MAX)
+        NW[:,n] = NW[:,n]/sum(NW[:,n])
     end
     return SMCRes(Z,J,W,NW,A)
 end

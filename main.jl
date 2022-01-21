@@ -19,3 +19,5 @@ density(BVRPF_25par_100fold[:,5])
 
 AC = autocor(BVRPF_25par_100fold)
 plot(AC[:,2])
+
+R = BlockVRPF.TunePars(ChangePoint,y,T,method="Global",auxpar=[2.0,1.0],SMCAdaptN=100)
