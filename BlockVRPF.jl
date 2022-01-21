@@ -31,7 +31,7 @@ function SMC(N,TimeVec,y;model,par,auxpar)
     NW[:,1] = exp.(W[:,1] .- MAX)
     NW[:,1] = NW[:,1]/sum(NW[:,1])
     if any(isnan.(NW[:,1]))
-        @save "error.jld2" Z J W
+        @save "error.jld2" Z J W par
         throw("NaN error")
     end
     for n = 2:T
@@ -45,7 +45,7 @@ function SMC(N,TimeVec,y;model,par,auxpar)
         NW[:,n] = exp.(W[:,n] .- MAX)
         NW[:,n] = NW[:,n]/sum(NW[:,n])
         if any(isnan.(NW[:,n]))
-            @save "error.jld2" Z J W
+            @save "error.jld2" Z J W par
             throw("NaN error")
         end
     end
@@ -76,7 +76,7 @@ function cSMC(L,N,TimeVec,y;model,par,auxpar)
     NW[:,1] = exp.(W[:,1] .- MAX)
     NW[:,1] = NW[:,1]/sum(NW[:,1])
     if any(isnan.(NW[:,1]))
-        @save "error.jld2" Z J W
+        @save "error.jld2" Z J W par
         throw("NaN error")
     end
     for n = 2:T
@@ -98,7 +98,7 @@ function cSMC(L,N,TimeVec,y;model,par,auxpar)
         NW[:,n] = exp.(W[:,n] .- MAX)
         NW[:,n] = NW[:,n]/sum(NW[:,n])
         if any(isnan.(NW[:,n]))
-            @save "error.jld2" Z J W
+            @save "error.jld2" Z J W par
             throw("NaN error")
         end
     end
