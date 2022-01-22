@@ -438,7 +438,7 @@ function BlockIncrementalWeight(J0,Z,t0,t1,t2,y,par,auxpar,propdensity)
                 llk  = CalLlk(J1,y,t1,t2,par)
             else
                 logτ = sum(logpdf.(IJ,Z.X.τ .- [[J0.τ[end]];Z.X.τ[1:end-1]]))
-                logϕ = sum(logpdf.(Normal.(par.ρ*[[J0.τ[end]];Z.X.τ[1:end-1]]),Z.X.ϕ))
+                logϕ = sum(logpdf.(Normal.(par.ρ*[[J0.ϕ[end]];Z.X.ϕ[1:end-1]],par.σϕ),Z.X.ϕ))
                 llk = CalLlk(J1,y,t1,t2,par)
             end
         else
@@ -449,11 +449,12 @@ function BlockIncrementalWeight(J0,Z,t0,t1,t2,y,par,auxpar,propdensity)
             else
                 logτ = sum(logpdf.(IJ,[[Z.taum];Z.X.τ] .- [[J0.τ[end-1],Z.taum];Z.X.τ[1:end-1]])) - logpdf(IJ,J0.τ[end]-J0.τ[end-1])
                 logϕ = sum(logpdf.(Normal.(par.ρ*[[J0.ϕ[end-1],Z.phim];Z.X.ϕ[1:end-1]],par.σϕ),[[Z.phim];Z.X.ϕ])) - logpdf(Normal(par.ρ*J0.ϕ[end-1],par.σϕ),J0.ϕ[end])
-            end
+            end 
         end
     end
     mu = μ(Z.M,t0,t1,J1)
     lambda   = λ(ubar,t0,t1,J1,auxpar)
+    #println("logS=$logS,logτ=$logτ,logϕ=$logϕ,llk=$llk,mu=$mu,lambda=$lambda")
     return logS + logτ + logϕ + llk - propdensity + mu + lambda
 end
 function Rejuvenate(J,T,auxpar)

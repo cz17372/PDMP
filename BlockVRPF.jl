@@ -31,7 +31,7 @@ function SMC(N,TimeVec,y;model,par,auxpar)
     NW[:,1] = exp.(W[:,1] .- MAX)
     NW[:,1] = NW[:,1]/sum(NW[:,1])
     if any(isnan.(NW[:,1]))
-        @save "error.jld2" Z J W par
+        @save "error.jld2" Z J W par A
         throw("NaN error")
     end
     for n = 2:T
@@ -45,7 +45,7 @@ function SMC(N,TimeVec,y;model,par,auxpar)
         NW[:,n] = exp.(W[:,n] .- MAX)
         NW[:,n] = NW[:,n]/sum(NW[:,n])
         if any(isnan.(NW[:,n]))
-            @save "error.jld2" Z J W par
+            @save "error.jld2" Z J W par A
             throw("NaN error")
         end
     end
@@ -76,7 +76,7 @@ function cSMC(L,N,TimeVec,y;model,par,auxpar)
     NW[:,1] = exp.(W[:,1] .- MAX)
     NW[:,1] = NW[:,1]/sum(NW[:,1])
     if any(isnan.(NW[:,1]))
-        @save "error.jld2" Z J W par
+        @save "error.jld2" Z J W par A L
         throw("NaN error")
     end
     for n = 2:T
@@ -98,7 +98,7 @@ function cSMC(L,N,TimeVec,y;model,par,auxpar)
         NW[:,n] = exp.(W[:,n] .- MAX)
         NW[:,n] = NW[:,n]/sum(NW[:,n])
         if any(isnan.(NW[:,n]))
-            @save "error.jld2" Z J W par
+            @save "error.jld2" Z J W par A L
             throw("NaN error")
         end
     end
@@ -124,10 +124,18 @@ function BS(SMCR,y,TimeVec;model,par,auxpar)
     L[T] = SMCR.Particles[ParticleIndex[T],T]
     for t = (T-1):-1:1
         for i = 1:N
-            BSWeight[i,t] = SMCR.Weights[i,t]+model.BlockBSIncrementalWeight(SMCR.PDMP[i,t],L[t+1],Laterξ,y,TimeVec[t],TimeVec[t+1],TimeVec[end],par,auxpar)
+            if SMCR.NWeights[i,t] == 0
+                BSWeight[i,t] = -Inf
+            else
+                BSWeight[i,t] = SMCR.Weights[i,t]+model.BlockBSIncrementalWeight(SMCR.PDMP[i,t],L[t+1],Laterξ,y,TimeVec[t],TimeVec[t+1],TimeVec[end],par,auxpar)
+            end
         end
         BSWeight[:,t] = exp.(BSWeight[:,t] .- findmax(BSWeight[:,t])[1])
         BSWeight[:,t] = BSWeight[:,t] / sum(BSWeight[:,t])
+        if any(isnan.(BSWeight[:,t]))
+            @save "bserror.jld2" BSWeight  L Laterξ par auxpar SMCR
+            throw("NaN erro")
+        end
         ParticleIndex[t] = vcat(fill.(1:N,rand(Multinomial(1,BSWeight[:,t])))...)[1]
         L[t] = SMCR.Particles[ParticleIndex[t],t]
         if L[t+1].M == 1
@@ -154,7 +162,7 @@ end
     SMCN::Int64 = 100
     T::Vector{Float64}
     NFold::Int64 = 500
-    Globalalpha::Float64=0.3
+    Globalalpha::Float64=0.25
     Componentalpha::Float64=0.5
 end
 function LogPosteriorRatio(oldθ,newθ,process,y,End,model)
@@ -198,11 +206,10 @@ function TunePars(model,y,T;method,auxpar,kws...)
     R = SMC(args.SMCAdaptN,args.T,y;model=model,par=oldpar,auxpar=auxpar)
     BSR = BS(R,y,args.T,model=model,par=oldpar,auxpar=auxpar)
     Path = BSR.BackwardPath
-    L = BSR.L
     L = model.Rejuvenate(Path,args.T,auxpar)
     # update
     @info "Tuning PG parameters..."
-    @showprogress 1 for n = 1:args.NAdapt
+    for n = 1:args.NAdapt
         # Propose new parameters
         if method == "Component"
             Λ = Matrix{Float64}(Diagonal(sqrt.(λmat[n,:])))
@@ -211,7 +218,7 @@ function TunePars(model,y,T;method,auxpar,kws...)
         else
             Z = rand(MultivariateNormal(zeros(args.dim),λvec[n]*Σ))
         end
-        newθ = oldθ.+Z
+        newθ = oldθ.+ Z
         newpar = model.convert_to_pars(newθ)
         if model.logprior(newθ) > -Inf
             LLkRatio = LogPosteriorRatio(oldθ,newθ,Path,y,args.T[end],model)
@@ -230,22 +237,15 @@ function TunePars(model,y,T;method,auxpar,kws...)
             oldpar = newpar
             oldθ = newθ
         end
+        println(oldθ)
         Σ = Σ + n^(-1/3)*((oldθ.-μ)*transpose(oldθ.-μ)-Σ)+1e-10*I
         μ = μ .+ n^(-1/3)*(oldθ .- μ)
-        """
-        if method == "Component"
-            println("lambda = ",λmat[n+1,:])
-        else
-            println("lambda = ",λvec[n+1])
-        end
-        """
         R = cSMC(L,args.SMCAdaptN,args.T,y,model=model,par=oldpar,auxpar=auxpar)
         BSR = BS(R,y,args.T,model=model,par=oldpar,auxpar=auxpar)
         Path = BSR.BackwardPath
         #push!(K,Path.K)
         #println("K=",Path.K,"llk=",model.JointDensity(Path,y,0.0,args.T[end],model.convert_to_pars(oldθ)))
         #println("No. Jumps = ",Path.K,"New Density = ",model.JointDensity(Path,y,0.0,args.T[end],oldpar))
-        L = BSR.L
         L = model.Rejuvenate(Path,args.T,auxpar)
     end
     if method == "Component"
