@@ -30,10 +30,6 @@ function SMC(N,TimeVec,y;model,par,auxpar)
     MAX,ind = findmax(W[:,1])
     NW[:,1] = exp.(W[:,1] .- MAX)
     NW[:,1] = NW[:,1]/sum(NW[:,1])
-    if any(isnan.(NW[:,1]))
-        @save "error.jld2" Z J W par A
-        throw("NaN error")
-    end
     for n = 2:T
         A[:,n-1] = vcat(fill.(1:N,rand(Multinomial(N,NW[:,n-1])))...)
         for i = 1:N
@@ -44,10 +40,6 @@ function SMC(N,TimeVec,y;model,par,auxpar)
         MAX,ind = findmax(W[:,n])
         NW[:,n] = exp.(W[:,n] .- MAX)
         NW[:,n] = NW[:,n]/sum(NW[:,n])
-        if any(isnan.(NW[:,n]))
-            @save "error.jld2" Z J W par A
-            throw("NaN error")
-        end
     end
     return SMCRes(Z,J,W,NW,A)
 end
@@ -75,10 +67,6 @@ function cSMC(L,N,TimeVec,y;model,par,auxpar)
     MAX,ind = findmax(W[:,1])
     NW[:,1] = exp.(W[:,1] .- MAX)
     NW[:,1] = NW[:,1]/sum(NW[:,1])
-    if any(isnan.(NW[:,1]))
-        @save "error.jld2" Z J W par A L
-        throw("NaN error")
-    end
     for n = 2:T
         A[:,n-1] = vcat(fill.(1:N,rand(Multinomial(N,NW[:,n-1])))...)
         A[1,n-1] = 1
@@ -97,10 +85,6 @@ function cSMC(L,N,TimeVec,y;model,par,auxpar)
         MAX,ind = findmax(W[:,n])
         NW[:,n] = exp.(W[:,n] .- MAX)
         NW[:,n] = NW[:,n]/sum(NW[:,n])
-        if any(isnan.(NW[:,n]))
-            @save "error.jld2" Z J W par A L
-            throw("NaN error")
-        end
     end
     return SMCRes(Z,J,W,NW,A)
 end
@@ -132,10 +116,6 @@ function BS(SMCR,y,TimeVec;model,par,auxpar)
         end
         BSWeight[:,t] = exp.(BSWeight[:,t] .- findmax(BSWeight[:,t])[1])
         BSWeight[:,t] = BSWeight[:,t] / sum(BSWeight[:,t])
-        if any(isnan.(BSWeight[:,t]))
-            @save "bserror.jld2" BSWeight  L Laterξ par auxpar SMCR
-            throw("NaN erro")
-        end
         ParticleIndex[t] = vcat(fill.(1:N,rand(Multinomial(1,BSWeight[:,t])))...)[1]
         L[t] = SMCR.Particles[ParticleIndex[t],t]
         if L[t+1].M == 1
@@ -198,7 +178,6 @@ function TunePars(model,y,T;method,auxpar,kws...)
     end
     Σ    = args.Σ0
     μ    = args.μ0
-    
     # initialise 
     oldθ = rand.(model.prior)
     #oldθ = [0.0,2.0,2.0,10.0,10.0]
@@ -209,7 +188,7 @@ function TunePars(model,y,T;method,auxpar,kws...)
     L = model.Rejuvenate(Path,args.T,auxpar)
     # update
     @info "Tuning PG parameters..."
-    for n = 1:args.NAdapt
+    @showprogress 1 for n = 1:args.NAdapt
         # Propose new parameters
         if method == "Component"
             Λ = Matrix{Float64}(Diagonal(sqrt.(λmat[n,:])))
@@ -237,7 +216,7 @@ function TunePars(model,y,T;method,auxpar,kws...)
             oldpar = newpar
             oldθ = newθ
         end
-        println(oldθ)
+        #println(oldθ)
         Σ = Σ + n^(-1/3)*((oldθ.-μ)*transpose(oldθ.-μ)-Σ)+1e-10*I
         μ = μ .+ n^(-1/3)*(oldθ .- μ)
         R = cSMC(L,args.SMCAdaptN,args.T,y,model=model,par=oldpar,auxpar=auxpar)
