@@ -21,3 +21,8 @@ AC = autocor(BVRPF_25par_100fold)
 plot(AC[:,2])
 
 R = BlockVRPF.TunePars(ChangePoint,y,T,method="Global",auxpar=[2.0,1.0],SMCAdaptN=100)
+
+@load "error.jld2"
+
+a = ChangePoint.ProposedZDendity(Z[1,7],J[1,6],500.0,600.0,700.0,y,par,[2.0,1.0])
+ChangePoint.BlockIncrementalWeight(J[1,5],Z[1,6],400,500,600,y,par,[2.0,1.0],a)

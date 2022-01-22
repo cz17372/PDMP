@@ -118,7 +118,7 @@ function BS(SMCR,y,TimeVec;model,par,auxpar)
     BSWeight = zeros(N,T)
     BSWeight[:,T] = SMCR.NWeights[:,T]
     ParticleIndex = zeros(Int64,T)
-    ParticleIndex[T] = sample(1:N,Weights(BSWeight[:,T]),1)[1]
+    ParticleIndex[T] = vcat(fill.(1:N,rand(Multinomial(1,SMCR.NWeights[:,T])))...)[1]
     Laterξ = SMCR.Particles[ParticleIndex[T],T].X
     L = Vector{Any}(undef,T)
     L[T] = SMCR.Particles[ParticleIndex[T],T]
@@ -126,9 +126,9 @@ function BS(SMCR,y,TimeVec;model,par,auxpar)
         for i = 1:N
             BSWeight[i,t] = SMCR.Weights[i,t]+model.BlockBSIncrementalWeight(SMCR.PDMP[i,t],L[t+1],Laterξ,y,TimeVec[t],TimeVec[t+1],TimeVec[end],par,auxpar)
         end
-        BSWeight[:,t] = exp.(BSWeight[:,t] .- findmax(BSWeight[:,t])[1] )
+        BSWeight[:,t] = exp.(BSWeight[:,t] .- findmax(BSWeight[:,t])[1])
         BSWeight[:,t] = BSWeight[:,t] / sum(BSWeight[:,t])
-        ParticleIndex[t] = sample(1:N,Weights(BSWeight[:,t]),1)[1]
+        ParticleIndex[t] = vcat(fill.(1:N,rand(Multinomial(1,BSWeight[:,t])))...)[1]
         L[t] = SMCR.Particles[ParticleIndex[t],t]
         if L[t+1].M == 1
             Laterξ = model.PDMP(L[t].X.K + 1 + Laterξ.K,[L[t].X.τ;[L[t+1].taum];Laterξ.τ],[L[t].X.ϕ;[L[t+1].phim];Laterξ.ϕ])

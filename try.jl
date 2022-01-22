@@ -1,24 +1,20 @@
-using Distributions, Plots, StatsPlots, Random, StatsBase
-include("SNC.jl");include("VRPF.jl");include("ChangePoint.jl");include("BlockVRPF.jl")
 
+cd(dirname(@__FILE__))
+using Distributions, Plots, StatsPlots,Random, StatsBase, LinearAlgebra, JLD2
+using Base:@kwdef
+theme(:ggplot2)
+include("ChangePoint.jl")
+include("VRPF.jl")
+include("BlockVRPF.jl")
+@load "error.jld2"
+ξ,y = ChangePoint.SimData(seed=2022);ChangePoint.ProcObsGraph(ξ,y)
+a = ChangePoint.ProposedZDendity(Z[1,7],J[1,6],500.0,600.0,700.0,y,par,[2.0,1.0])
 
-J,y = ChangePoint.SimData(seed=2022)
-N = 10000; T = collect(0:100.0:1000);auxpar=[2.0,1.0];par=ChangePoint.pars()
-
-λ,Σ,_ = BlockVRPF.TunePars(ChangePoint,y,T,method="Global",auxpar=[2.0,1.0],Globalalpha=0.25,SMCAdaptN=100)
-θ0 = rand.(ChangePoint.prior)
-BlockR = BlockVRPF.PG(ChangePoint,y,T,proppar=(λ,Σ),auxpar=[2.0,1.0],θ0=θ0,SMCN=5,NFold=500)
-R = VRPF.PG(ChangePoint,y,T,proppar=(λ,Σ),θ0=θ0,SMCN=5,NFold=500)
-
-t = 1;plot(BlockR[:,t]);plot!(R[:,t])
-
-plot(autocor(BlockR)[:,4]);plot!(autocor(R)[:,4])
-
-
-J,y = SNC.SimData(seed=17372)
-p1 = histogram(y,bins=400,label="",xlabel="time",ylabel="frequency")
-t = collect(0.0:0.1:1000.0)
-par = SNC.pars()
-ζ = SNC.getζ.(t,Ref(J),Ref(par))
-p2 = plot(t,ζ,label="",xlabel="time",ylabel="PDMP")
-plot(p1,p2,layout=(2,1))
+J0 = J[1,6];Z = Z[1,7]; t0=500;t1=600;t2=700
+auxpar=[2.0,1.0]
+llk = 0.0
+MeanJumpTime = (t2-t1)/(par.α*par.β)
+llk += logpdf(Poisson(MeanJumpTime),Z.X.K)
+llk += sum(log.(collect(1:Z.X.K)/(t2-t1)))
+IJ = Gamma(par.α,par.β)
+prob = cdf(IJ,t1-J0.τ[end])
