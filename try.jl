@@ -1,24 +1,22 @@
-
 cd(dirname(@__FILE__))
-using Distributions, Plots, StatsPlots,Random, StatsBase, LinearAlgebra, JLD2
+using Distributions, Plots, StatsPlots,Random, StatsBase, LinearAlgebra, JLD2, Optim
 using Base:@kwdef
 theme(:ggplot2)
-include("ChangePoint.jl")
+include("ChangePoint2.jl")
 include("VRPF.jl")
 include("BlockVRPF.jl")
-@load "error.jld2"
-ξ,y = ChangePoint.SimData(seed=2022);ChangePoint.ProcObsGraph(ξ,y)
-a = ChangePoint.ProposedZDendity(Z[1,7],J[1,6],500.0,600.0,700.0,y,par,[2.0,1.0])
+ζ,y = CP.SimData(seed=1313);CP.ProcObsGraph(ζ,y)
+T = collect(0.0:20:1000)
+λ,Σ,_ = BlockVRPF.TunePars(CP,y,T,method="Global",auxpar=[2.0,1.0],SMCAdaptN=10,Globalalpha=0.2)
+Random.seed!(12345)
+θ0 = rand.(CP.prior)
+BlockR_5Par = BlockVRPF.PG(CP,y,T,proppar=(λ,Σ),auxpar=[1.0,0.5],θ0=θ0,SMCN=5,NBurn=20000)
+R_5Par = VRPF.PG(CP,y,T,proppar=(λ,Σ),θ0=θ0,SMCN=5,NBurn=20000)
+BlockR_25Par = BlockVRPF.PG(CP,y,T,proppar =(λ,Σ),auxpar=[0.01,0.25],θ0=θ0,SMCN=25,NBurn=20000)
+R_25Par = VRPF.PG(CP,y,T,proppar=(λ,Σ),θ0=θ0,SMCN=25,NBurn=20000)
+autocor(BlockR_5Par)
+autocor(R_5Par)
 
-J0 = J[1,9];Z = Z[1,10]; t0=800;t1=900;t2=1000
+plot(BlockR_5Par[:,4],color=:grey,linewidth=0.5)
 
-ChangePoint.ProposedZDendity(Z,J0,t0,t1,t2,y,par,[2.0,1.0])
-ChangePoint.BlockIncrementalWeight(J0,Z,t0,t1,t2,y,par,[2.0,1.0],0.0)
-
-R = BlockVRPF.SMC(100,collect(0:100:1000),y,model=ChangePoint,par=par,auxpar=[2.0,1.0])
-
-_,index = findmax(R.NWeights[:,end])
-R.PDMP[index,end]
-
-BS = BlockVRPF.BS(R,y,collect(0:100:1000),model=ChangePoint,par=par,auxpar=[2.0,1.0])
-BS.BackwardPath
+density(BlockR_5Par[:,5])

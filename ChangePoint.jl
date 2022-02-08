@@ -268,6 +268,7 @@ function λ(ubar,t0,t1,J1,auxpar)
         return 0.0
     else
         ind = findlast(J1.τ .<= t1)
+        #llk = logpdf(Normal(J1.ϕ[ind],auxpar[2]),ubar.phi) + logpdf(Uniform(max(t0,J1.τ[ind-1]),t1),ubar.tau)
         llk = logpdf(Normal(J1.ϕ[ind],auxpar[2]),ubar.phi) + logpdf(truncated(Normal(J1.τ[ind],auxpar[1]) ,max(t0,J1.τ[ind-1]),t1),ubar.tau)
         return llk
     end
@@ -340,7 +341,7 @@ function GenZ(J0,t0,t1,t2,y,par,auxpar)
         llk += logpdf(Normal(μ,sd),ϕ[i])
         prevϕ = ϕ[i]
     end
-    return (Z(M,taum,phim,ChangePoint.PDMP(K,τ,ϕ)),llk)
+    return (Z(M,taum,phim,PDMP(K,τ,ϕ)),llk)
 end
 function ProposedZDendity(Z,J0,t0,t1,t2,y,par,auxpar)
     llk = 0.0
@@ -416,6 +417,9 @@ function BlockAddPDMP(J0,Z)
     return (PDMP(K,tau,phi),ubar)
 end
 function BlockIncrementalWeight(J0,Z,t0,t1,t2,y,par,auxpar,propdensity)
+    if isinf(propdensity)
+        return -Inf
+    end
     IJ = Gamma(par.α,par.β)
     # Calculate the density ratio related to τ's 
     J1,ubar = BlockAddPDMP(J0,Z)
@@ -483,6 +487,7 @@ function Rejuvenate(J,T,auxpar)
             prevtau = J.τ[findlast(J.τ .< temptau[end])]
             prevphi = J.ϕ[findlast(J.τ .< temptau[end])]
             taubar = rand(truncated(Normal(temptau[end],auxpar[1]),max(T[n],prevtau),T[n+1]))
+            #taubar = rand(Uniform(max(T[n],prevtau),T[n+1]))
             phibar = rand(Normal(tempphi[end],auxpar[2]))
             X[n] = PDMP(length(temptau)-1,[temptau[1:end-1];[taubar]],[tempphi[1:end-1];[phibar]])
             U[n,:] = [temptau[end],tempphi[end]]
@@ -507,6 +512,7 @@ function Rejuvenate(J,T,auxpar)
                 prevtau = J.τ[findlast(J.τ .< temptau[end])]
                 prevphi = J.ϕ[findlast(J.τ .< temptau[end])]
                 taubar = rand(truncated(Normal(temptau[end],auxpar[1]),max(T[n],prevtau),T[n+1]))
+                #taubar = rand(Uniform(max(T[n],prevtau),T[n+1]))
                 phibar = rand(Normal(tempphi[end],auxpar[2]))
                 X[n] = PDMP(length(temptau),[temptau[1:end-1];[taubar]],[tempphi[1:end-1];[phibar]])
                 U[n,:] = [temptau[end],tempphi[end]]

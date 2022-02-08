@@ -34,7 +34,11 @@ function SMC(N,TimeVec,y;model,par)
         for i = 1:N
             X[i,n],SampDenMat[i,n] = model.GenParticle(TimeVec[n],TimeVec[n+1],J[A[i,n-1],n-1],y,par)
             J[i,n] = model.addPDMP(J[A[i,n-1],n-1],X[i,n])
-            W[i,n] = model.JointDensityRatio(J[A[i,n-1],n-1],TimeVec[n],J[i,n],TimeVec[n+1],y,par) - SampDenMat[i,n]
+            if isinf(SampDenMat[i,n])
+                W[i,n] = -Inf
+            else
+                W[i,n] = model.JointDensityRatio(J[A[i,n-1],n-1],TimeVec[n],J[i,n],TimeVec[n+1],y,par) - SampDenMat[i,n]
+            end
         end
         NW[:,n] = exp.(W[:,n] .- findmax(W[:,n])[1])/sum(exp.(W[:,n] .- findmax(W[:,n])[1]))
     end
@@ -108,7 +112,7 @@ end
     Σ0::Matrix{Float64} = 10.0*Matrix{Float64}(I,dim,dim)
     μ0::Vector{Float64} = zeros(dim)
     NAdapt::Int64 = 50000
-    NBurn::Int64 = 10000
+    NBurn::Int64 = 20000
     NChain::Int64= 50000
     SMCAdaptN::Int64 = 10
     SMCN::Int64 = 100
@@ -166,7 +170,7 @@ function TunePars(model,y,T;method,θ0,kws...)
     L = BSR.L
     # update
     @info "Tuning PG parameters..."
-    @showprogress 1 for n = 1:args.NAdapt
+    @showprogress 2 for n = 1:args.NAdapt
         # Propose new parameters
         if method == "Component"
             Λ = Matrix{Float64}(Diagonal(sqrt.(λmat[n,:])))
@@ -194,6 +198,7 @@ function TunePars(model,y,T;method,θ0,kws...)
             oldpar = newpar
             oldθ = newθ
         end
+        println(oldθ)
         Σ = Σ + n^(-1/3)*((oldθ.-μ)*transpose(oldθ.-μ)-Σ)+1e-10*I
         μ = μ .+ n^(-1/3)*(oldθ .- μ)
         """
@@ -264,7 +269,7 @@ function PG(model,y,T;proppar=nothing,θ0=nothing,method="Global",kws...)
     Path = BSR.BackwardPath
     L = BSR.L
     @info "Running PG algorithms..."
-    @showprogress 1 for n = 1:(args.NBurn+args.NChain)
+    @showprogress 2 for n = 1:(args.NBurn+args.NChain)
         θ[n+1,:] = MH(θ[n,:],Path,y,args.NFold,method=method,model=model,T=T[end],λ=λ,Σ=Σ)
         R = VRPF.cSMC(L,args.SMCN,args.T,y,model=model,par=model.convert_to_pars(θ[n+1,:]))
         BSR = VRPF.BS(R,y,args.T,model=model,par=model.convert_to_pars(θ[n+1,:]))
@@ -273,78 +278,5 @@ function PG(model,y,T;proppar=nothing,θ0=nothing,method="Global",kws...)
     end
     return θ[(args.NBurn+2):end,:]
 end
-function APG(model,y,T;method,θ0=nothing,kws...)
-    args = PGargs(;dim=model.dim,T=T,kws...)
-    if method == "Component"
-        λmat = zeros(args.NIter+1,model.dim)
-        λmat[1,:] = args.λ0 * ones(args.dim)
-    else
-        λvec = zeros(args.NIter+1)
-        λvec[1] = args.λ0
-    end
-    Σ    = args.Σ0
-    μ    = args.μ0
-    θ = zeros(args.NIter+1,args.dim)
-    # initialise 
-    if isnothing(θ0)
-        θ[1,:] = rand.(model.prior)
-    else
-        θ[1,:] = θ0
-    end
-    oldpar = model.convert_to_pars(θ[1,:])
-    R = SMC(args.SMCN,args.T,y;model=model,par=oldpar)
-    BSR = BS(R,y,args.T,model=model,par=oldpar)
-    Path = BSR.BackwardPath
-    L = BSR.L
-    # update
-    @info "Tuning PG parameters..."
-    @showprogress 1 for n = 1:args.NIter
-        # Propose new parameters
-        if method == "Component"
-            Λ = Matrix{Float64}(Diagonal(sqrt.(λmat[n,:])))
-            vars = Λ*cholesky(Σ).L; vars = vars*transpose(vars)
-            Z = rand(MultivariateNormal(zeros(args.dim),vars))
-        else
-            Z = rand(MultivariateNormal(zeros(args.dim),λvec[n]*Σ))
-        end
-        newθ = θ[n,:].+Z
-        newpar = model.convert_to_pars(newθ)
-        if model.logprior(newθ) > -Inf
-            LLkRatio = LogPosteriorRatio(θ[n,:],newθ,Path,y,args.T[end],model)
-            α = min(1,exp(LLkRatio))
-            #println("density of old is",model.JointDensity(Path,y,0.0,args.T[end],oldpar))
-            #println("density of new is",model.JointDensity(Path,y,0.0,args.T[end],newpar))
-        else
-            α = 0.0
-        end
-        if method=="Component"
-            λmat[n+1,:] =Tuneλ(θ[n,:],Z,λmat[n,:],n^(-1/3),process=Path,y=y,End=args.T[end],model=model,args=args)
-        else
-            λvec[n+1] = exp(log(λvec[n])+n^(-1/3)*(α - args.Globalalpha))
-        end
-        if rand() < α
-            oldpar = newpar
-            θ[n+1,:] = newθ
-        else
-            θ[n+1,:] = θ[n,:]
-        end
-        Σ = Σ + n^(-1/3)*((θ[n+1,:].-μ)*transpose(θ[n+1,:].-μ)-Σ)+1e-10*I
-        μ = μ .+ n^(-1/3)*(θ[n+1,:] .- μ)
-        #println(θ[n+1,:])
-        """
-        if method == "Component"
-            println("lambda = ",λmat[n+1,:])
-        else
-            println("lambda = ",λvec[n+1])
-        end
-        """
-        R = cSMC(L,args.SMCN,args.T,y,model=model,par=oldpar)
-        BSR = BS(R,y,args.T,model=model,par=oldpar)
-        Path = BSR.BackwardPath
-        #println("K=",Path.K,"llk=",model.JointDensity(Path,y,0.0,args.T[end],model.convert_to_pars(oldθ)))
-        #println("No. Jumps = ",Path.K,"New Density = ",model.JointDensity(Path,y,0.0,args.T[end],oldpar))
-        L = BSR.L
-    end
-    return θ
-end
+
 end
