@@ -2,15 +2,6 @@ module SNC
 using Distributions, Random, Plots, Roots,JLD2
 using Base:@kwdef
 dim = 3
-
-function gentruncated(posterior)
-    logu = log(rand())
-    f(x) = logcdf(posterior,x) - logu
-    if f(posterior.lower)*f(posterior.upper) >= 0
-        @save "err.jld2" posterior f 
-    end
-    return find_zero(f,(posterior.lower,posterior.upper))
-end
 @kwdef mutable struct pars
     λτ::Float64 = 1/40
     λϕ::Float64 = 2/3
@@ -19,23 +10,10 @@ end
 function convert_to_pars(θ)
     return pars(λτ=θ[1],λϕ=θ[2],κ=θ[3])
 end
-mutable struct PDMP
-    K::Int64
-    τ::Vector{Float64}
-    ϕ::Vector{Float64}
-end
-"""
-    getζ(t,J,par)
-Get the PDMP process values at time t given the jump times and values (J) and the parameters (par)
-"""
-function getζ(t,J,par)
-    index = findlast(J.τ .<= t)
-    return J.ϕ[index]*exp(-par.κ*(t-J.τ[index]))
-end
-"""
-    integrateζ(J,t1,t2,par)
-Calculate the integral of the PDMP defined by J between t1 and t2.
-"""
+logf(τ1,τ0,par) = logpdf(Exponential(1/par.λτ),τ1-τ0)
+logg(ϕ1,ϕ0,τ0,τ1,par) = logpdf(Exponential(1/par.λϕ),ϕ1 - ϕ0*exp(-par.κ*(τ1-τ0)))
+logS(τ,t,par) = logccdf(Exponential(1/par.λτ),t-τ)
+logϕ0(ϕ0,par) = logpdf(Exponential(1/par.λϕ),ϕ0)
 function integrateζ(J,t1,t2,par)
     phistart = getζ(t1,J,par)
     phiend   = getζ(t2,J,par)
@@ -54,6 +32,37 @@ function CalLlk(J,y,Start,End,par)
     integral = integrateζ(J,Start,End,par)
     return -integral+sum(log.(ζvec))
 end
+"""
+    getζ(t,J,par)
+Get the PDMP process values at time t given the jump times and values (J) and the parameters (par)
+"""
+function getζ(t,J,par)
+    index = findlast(J.τ .<= t)
+    return J.ϕ[index]*exp(-par.κ*(t-J.τ[index]))
+end
+
+function K_ϕ0(EndTime,y,par)
+    β = 1/par.κ*(1-exp(-par.κ*(EndTime-0.0))) + par.λϕ
+    α = length(findall(0.0 .< y .< EndTime)) + 1
+    return truncated(Gamma(α,1/β),0.0,Inf)
+end
+function K_ϕ(prevtau,prevphi,currenttau,EndTime,y,par)
+    β = 1/par.κ*(1-exp(-par.κ*(EndTime-currenttau))) + par.λϕ
+    α = length(findall(currenttau .< y .< EndTime)) + 1
+    lower_bound = prevphi * exp(-par.κ*(currenttau - prevtau))
+    return truncated(Gamma(α,1/β),lower_bound,Inf)
+end
+function K_K(Start,End,y,par)
+    MeanJumpTime = 1/par.λτ
+    return Poisson((End-Start)/MeanJumpTime)
+end
+
+mutable struct PDMP
+    K::Int64
+    τ::Vector{Float64}
+    ϕ::Vector{Float64}
+end
+
 function SimData(;seed=12345,T=1000.0,kws...)
     Random.seed!(seed)
     par = pars(;kws...)
@@ -113,9 +122,11 @@ function GenParticle(Start,End,y,par)
         α = length(findall(extendedτ[i] .< y .<= extendedτ[i+1])) +1
         posterior = truncated(Gamma(α,1/β),prevphi*exp(-par.κ*(extendedτ[i]-prevtau)),Inf)
         ϕ[i] = rand(posterior)
+        """
         if isinf(ϕ[i])
             ϕ[i] = gentruncated(posterior)
         end
+        """
         llk += logpdf(posterior,ϕ[i])
         prevphi = ϕ[i]
         prevtau = extendedτ[i]
@@ -164,9 +175,6 @@ function GenParticle(Start,End,J0,y,par)
         α = length(findall(extendedτ[i] .< y .<= extendedτ[i+1])) +1
         posterior = truncated(Gamma(α,1/β),prevphi*exp(-par.κ*(extendedτ[i]-prevtau)),Inf)
         ϕ[i] = rand(posterior)
-        if isinf(ϕ[i])
-            ϕ[i] = gentruncated(posterior)
-        end
         llk += logpdf(posterior,ϕ[i])
         prevphi = ϕ[i]
         prevtau = extendedτ[i]
@@ -293,13 +301,15 @@ function μ(m,t0,t1,J1)
         return log(0.5)
     end
 end
-function λ(ubar,t0,t1,J1,auxpar)
+function λ(ubar,t0,t1,J1,auxpar,par)
     if isnothing(ubar.tau)
         return 0.0
     else
         ind = findlast(J1.τ .<= t1)
-        #llk = logpdf(Normal(J1.ϕ[ind],auxpar[2]),ubar.phi) + logpdf(Uniform(max(t0,J1.τ[ind-1]),t1),ubar.tau)
-        llk = logpdf(Normal(J1.ϕ[ind],auxpar[2]),ubar.phi) + logpdf(truncated(Normal(J1.τ[ind],auxpar[1]) ,max(t0,J1.τ[ind-1]),t1),ubar.tau)
+        taudist = truncated(Normal(J1.τ[ind],auxpar[1]) ,max(t0,J1.τ[ind-1]),t1)
+        lower_bound = J1.ϕ[ind-1]*exp(-par.κ*(J1.τ[ind]-J1.τ[ind-1]))
+        phidist = truncated(Normal(J1.ϕ[ind],auxpar[2]),lower_bound,Inf)
+        llk = logpdf(phidist,ubar.phi) + logpdf(taudist,ubar.tau)
         return llk
     end
 end 
@@ -340,10 +350,10 @@ function GenZ(J0,t0,t1,t2,y,par,auxpar)
         phim = nothing
     else
         if K == 0
-            β = 1/par.κ*(1-exp(-par.κ*(t2-taum))) + 1/par.λϕ
+            β = 1/par.κ*(1-exp(-par.κ*(t2-taum))) + par.λϕ
             α = length(findall(taum .< y .<= t2)) +1
         else
-            β = 1/par.κ*(1-exp(-par.κ*(τ[1]-taum))) + 1/par.λϕ
+            β = 1/par.κ*(1-exp(-par.κ*(τ[1]-taum))) + par.λϕ
             α = length(findall(taum .< y .<=τ[1])) +1
         end
         if M == 1
@@ -355,9 +365,11 @@ function GenZ(J0,t0,t1,t2,y,par,auxpar)
         end
         posterior = truncated(Gamma(α,1/β),prevphi*exp(-par.κ*(taum-prevtau)),Inf)
         phim = rand(posterior)
+        """
         if isinf(phim)
             phim = gentruncated(posterior)
         end
+        """
         llk += logpdf(posterior,phim)
     end
     if isnothing(taum)
@@ -370,13 +382,15 @@ function GenZ(J0,t0,t1,t2,y,par,auxpar)
     ϕ = zeros(length(τ))
     extendedτ = [τ;[t2]]
     for i = 1:length(ϕ)
-        β = 1/par.κ*(1-exp(-par.κ*(extendedτ[i+1]-extendedτ[i]))) + 1/par.λϕ
+        β = 1/par.κ*(1-exp(-par.κ*(extendedτ[i+1]-extendedτ[i]))) + par.λϕ
         α = length(findall(extendedτ[i] .< y .<= extendedτ[i+1])) +1
         posterior = truncated(Gamma(α,1/β),prevphi*exp(-par.κ*(extendedτ[i]-prevtau)),Inf)
         ϕ[i] = rand(posterior)
+        """
         if isinf(ϕ[i])
             ϕ[i] = gentruncated(posterior)
         end
+        """
         llk += logpdf(posterior,ϕ[i])
         prevphi = ϕ[i]
         prevtau = extendedτ[i]
@@ -407,10 +421,10 @@ function ProposedZDendity(Z,J0,t0,t1,t2,y,par,auxpar)
        llk+=0
     else
         if Z.X.K == 0
-            β = 1/par.κ*(1-exp(-par.κ*(t2-Z.taum))) + 1/par.λϕ
+            β = 1/par.κ*(1-exp(-par.κ*(t2-Z.taum))) + par.λϕ
             α = length(findall(Z.taum .< y .<= t2)) +1
         else
-            β = 1/par.κ*(1-exp(-par.κ*(Z.X.τ[1]-Z.taum))) + 1/par.λϕ
+            β = 1/par.κ*(1-exp(-par.κ*(Z.X.τ[1]-Z.taum))) + par.λϕ
             α = length(findall(Z.taum .< y .<=Z.X.τ[1])) +1
         end
         if Z.M == 1
@@ -432,7 +446,7 @@ function ProposedZDendity(Z,J0,t0,t1,t2,y,par,auxpar)
     end
     extendedτ = [Z.X.τ;[t2]]
     for i = 1:length(Z.X.ϕ)
-        β = 1/par.κ*(1-exp(-par.κ*(extendedτ[i+1]-extendedτ[i]))) + 1/par.λϕ
+        β = 1/par.κ*(1-exp(-par.κ*(extendedτ[i+1]-extendedτ[i]))) + par.λϕ
         α = length(findall(extendedτ[i] .< y .<= extendedτ[i+1])) +1
         posterior = truncated(Gamma(α,1/β),prevphi*exp(-par.κ*(extendedτ[i]-prevtau)),Inf)
         llk += logpdf(posterior,Z.X.ϕ[i])
@@ -500,10 +514,13 @@ function BlockIncrementalWeight(J0,Z,t0,t1,t2,y,par,auxpar,propdensity)
         end
     end
     mu = μ(Z.M,t0,t1,J1)
-    lambda   = λ(ubar,t0,t1,J1,auxpar)
+    lambda   = λ(ubar,t0,t1,J1,auxpar,par)
+    """
+    println("logS =",logS);println("logτ =",logτ);println("logϕ =",logϕ);println("llk =",llk);println("mu =",mu);println("lambda =",lambda)
+    """
     return logS + logτ + logϕ + llk - propdensity + mu + lambda 
 end
-function Rejuvenate(J,T,auxpar)
+function Rejuvenate(J,T,auxpar,par)
     P = length(T)-1
     Z0 = Vector{Any}(undef,P)
     X = Vector{Any}(undef,P)
@@ -529,8 +546,8 @@ function Rejuvenate(J,T,auxpar)
             prevtau = J.τ[findlast(J.τ .< temptau[end])]
             prevphi = J.ϕ[findlast(J.τ .< temptau[end])]
             taubar = rand(truncated(Normal(temptau[end],auxpar[1]),max(T[n],prevtau),T[n+1]))
-            #taubar = rand(Uniform(max(T[n],prevtau),T[n+1]))
-            phibar = rand(Normal(tempphi[end],auxpar[2]))
+            lower_bound = prevphi * exp(-par.κ*(taubar-prevtau))
+            phibar = rand(truncated(Normal(tempphi[end],auxpar[2]),lower_bound,Inf))
             X[n] = PDMP(length(temptau)-1,[temptau[1:end-1];[taubar]],[tempphi[1:end-1];[phibar]])
             U[n,:] = [temptau[end],tempphi[end]]
         end
@@ -554,8 +571,8 @@ function Rejuvenate(J,T,auxpar)
                 prevtau = J.τ[findlast(J.τ .< temptau[end])]
                 prevphi = J.ϕ[findlast(J.τ .< temptau[end])]
                 taubar = rand(truncated(Normal(temptau[end],auxpar[1]),max(T[n],prevtau),T[n+1]))
-                #taubar = rand(Uniform(max(T[n],prevtau),T[n+1]))
-                phibar = rand(Normal(tempphi[end],auxpar[2]))
+                lower_bound = prevphi * exp(-par.κ*(taubar-prevtau))
+                phibar = rand(truncated(Normal(tempphi[end],auxpar[2]),lower_bound,Inf))
                 X[n] = PDMP(length(temptau),[temptau[1:end-1];[taubar]],[tempphi[1:end-1];[phibar]])
                 U[n,:] = [temptau[end],tempphi[end]]
             end
@@ -579,7 +596,7 @@ function BlockBSIncrementalWeight(J0,Zstar,J1,y,t0,t1,tP,par,auxpar)
         else
             NewJ = PDMP(J0.K+1+J1.K,[J0.τ;[Zstar.taum];J1.τ],[J0.ϕ;[Zstar.phim];J1.ϕ])
             logμ = μ(Zstar.M,t0,t1,NewJ)
-            logλ = λ((tau=nothing,phi=nothing),t0,t1,NewJ,auxpar)
+            logλ = λ((tau=nothing,phi=nothing),t0,t1,NewJ,auxpar,par)
             logτ = logpdf(IJ,Zstar.taum-J0.τ[end])
             logϕ = logpdf(JV,Zstar.phim - F(Zstar.taum,J0.τ[end],J0.ϕ[end],par))
             llk = -CalLlk(J0,y,Zstar.taum,t1,par)
@@ -593,7 +610,7 @@ function BlockBSIncrementalWeight(J0,Zstar,J1,y,t0,t1,tP,par,auxpar)
             else
                 NewJ = PDMP(J0.K + J1.K,[J0.τ;J1.τ],[J0.ϕ;J1.ϕ])
                 logμ = μ(Zstar.M,t0,t1,NewJ)
-                logλ = λ((tau=nothing,phi=nothing),t0,t1,NewJ,auxpar)
+                logλ = λ((tau=nothing,phi=nothing),t0,t1,NewJ,auxpar,par)
                 if J1.K == 0
                     logτ = 0.0
                     logϕ = 0.0
@@ -615,7 +632,7 @@ function BlockBSIncrementalWeight(J0,Zstar,J1,y,t0,t1,tP,par,auxpar)
             else
                 NewJ = PDMP(J0.K + J1.K,[J0.τ[1:end-1];[Zstar.taum];J1.τ],[J0.ϕ[1:end-1];[Zstar.phim];J1.ϕ])
                 logμ = μ(Zstar.M,t0,t1,NewJ)
-                logλ = λ((tau=J0.τ[end],phi=J0.ϕ[end]),t0,t1,NewJ,auxpar)
+                logλ = λ((tau=J0.τ[end],phi=J0.ϕ[end]),t0,t1,NewJ,auxpar,par)
                 logτ = logpdf(IJ,Zstar.taum-J0.τ[end-1]) - logpdf(IJ,J0.τ[end]-J0.τ[end-1])
                 logS = - logccdf(IJ,t1-J0.τ[end])
                 logϕ = logpdf(JV,Zstar.phim - F(Zstar.taum,J0.τ[end-1],J0.ϕ[end-1],par)) - logpdf(JV,J0.ϕ[end] - F(J0.τ[end],J0.τ[end-1],J0.ϕ[end-1],par))
