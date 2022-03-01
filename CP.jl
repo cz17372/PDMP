@@ -91,5 +91,31 @@ function K_ϕ(prevtau,prevphi,currenttau,EndTime,y,par)
     sd = par.σϕ*par.σy/sqrt(length(partialy)*par.σϕ^2 + par.σy^2)
     return Normal(μ,sd)
 end
-
+function K_M(J0,t1,par)
+    birth_prob = cdf(Gamma(par.α,par.β),t1-J0.τ[end])
+    return Binomial(1,birth_prob)
+end
+function K_τm(M,t0,t1,J0,par,auxpar)
+    if M == 1
+        return Uniform(max(t0,J0.τ[end]),t1)
+    elseif M == 0
+        return truncated(Normal(J0.τ[end],auxpar[1]),max(J0.τ[end-1],t0),t1)
+    end
+end
+function μ(t0,t1,J1,par,auxpar)
+    index = findlast(J1.τ .< t1)
+    if J1.τ[index] <= t0
+        return Binomial(1,0)
+    else
+        return Binomial(1,0.5)
+    end     
+end
+function λτ(t0,t1,J1,par,auxpar)
+    index = findlast(J1.τ .< t1)
+    return truncated(Normal(J1.τ[index],auxpar[1]),max(t0,J1.τ[index-1]),t1)
+end
+function λϕ(τ,t0,t1,J1,par,auxpar)
+    index = findlast(J1.τ .< t1)
+    return Normal(J1.ϕ[index],auxpar[2])
+end
 end

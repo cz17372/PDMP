@@ -100,6 +100,7 @@ function K_K(Start,End,y,par)
     MeanJumpTime = 1/par.λτ
     return Poisson((End-Start)/MeanJumpTime)
 end
+
 function K_M(J0,t1,par)
     birth_prob = cdf(Exponential(1/par.λτ),t1-J0.τ[end])
     return Binomial(1,birth_prob)
