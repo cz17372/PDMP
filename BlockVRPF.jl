@@ -1,7 +1,6 @@
 module BlockVRPF
 using Distributions, Plots, StatsPlots, JLD2, LinearAlgebra, ProgressMeter
 using Base:@kwdef
-include("SNC2.jl"); include("VRPF.jl")
 function log_pdmp_Prior(J,EndTime,model,par)
     # Joint density for the jump times
     log_τ_density = sum(model.logf.(J.τ[2:end],J.τ[1:end-1],Ref(par)))
