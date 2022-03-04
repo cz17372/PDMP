@@ -529,7 +529,7 @@ end
 @kwdef mutable struct PGargs
     dim::Int64
     λ0::Float64 = 1.0
-    Σ0::Matrix{Float64} = 10*Matrix{Float64}(LinearAlgebra.I,dim,dim)
+    Σ0::Matrix{Float64} = 1.0*Matrix{Float64}(LinearAlgebra.I,dim,dim)
     μ0::Vector{Float64} = zeros(dim)
     NAdapt::Int64 = 50000
     NBurn::Int64 = 20000
@@ -573,7 +573,7 @@ function TunePars(model,y,T;θ0=nothing,auxpar,kws...)
             oldpar = newpar
             oldθ = newθ
         end
-        println(oldθ)
+        println(oldθ,Path.K)
         #println(oldθ)
         Σ = Σ + n^(-1/3)*((oldθ.-μ)*transpose(oldθ.-μ)-Σ)+1e-10*I
         μ = μ .+ n^(-1/3)*(oldθ .- μ)
@@ -628,7 +628,8 @@ function PG(model,y,T;proppar=nothing,θ0=nothing,auxpar,kws...)
     @info "Running PG algorithm with BlockVRPF method.."
     @showprogress 1 for n = 1:(args.NBurn+args.NChain)
         θ[n+1,:] = MH(θ[n,:],Path,y,args.NFold,model=model,T=args.T[end],λ=λ,Σ=Σ)
-        println(θ[n+1,:])
+        println(θ[n+1,:],log_pdmp_posterior(Path,T[end],y,model,model.convert_to_pars(θ[n+1,:])))
+        #L = BSR.L
         L = Rejuvenate(Path,args.T,model,model.convert_to_pars(θ[n+1,:]),auxpar)
         R = cSMC(L,args.SMCN,args.T,y,model,model.convert_to_pars(θ[n+1,:]),auxpar)
         BSR = BS(R,y,args.T,model,model.convert_to_pars(θ[n+1,:]),auxpar)
