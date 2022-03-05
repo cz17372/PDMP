@@ -360,7 +360,6 @@ function TunePars(model,y,T;θ0=nothing,method="Global",kws...)
         if rand() < α
             oldpar = newpar
             oldθ = newθ
-            
         end
         println(oldθ,log_pdmp_posterior(Path,args.T[end],y,model,oldpar))
         Σ = Σ + n^(-1/3)*((oldθ.-μ)*transpose(oldθ.-μ)-Σ)+1e-10*LinearAlgebra.I
@@ -426,7 +425,7 @@ function PG(model,y,T;proppar=nothing,θ0=nothing,method="Global",kws...)
     @info "Running PG algorithms..."
     @showprogress 2 for n = 1:(args.NBurn+args.NChain)
         θ[n+1,:] = MH(θ[n,:],Path,y,args.NFold,method=method,model=model,T=T[end],λ=λ,Σ=Σ)
-        println(θ[n+1,:],log_pdmp_posterior(Path,T[end],y,model,model.convert_to_pars(θ[n+1,:])))
+        #println(θ[n+1,:],log_pdmp_posterior(Path,T[end],y,model,model.convert_to_pars(θ[n+1,:])))
         R = cSMC(L,args.SMCN,args.T,y,model,model.convert_to_pars(θ[n+1,:]))
         BSR = BS(R,y,args.T,model,model.convert_to_pars(θ[n+1,:]))
         Path = BSR.Path

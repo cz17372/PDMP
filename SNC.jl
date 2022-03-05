@@ -117,7 +117,7 @@ function μ(t0,t1,J1,par,auxpar)
     if J1.τ[index] <= t0
         return Binomial(1,0)
     else
-        return Binomial(1,0.5)
+        return Binomial(1,0.1)
     end     
 end
 function λτ(t0,t1,J1,par,auxpar)

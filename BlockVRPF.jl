@@ -628,7 +628,7 @@ function PG(model,y,T;proppar=nothing,θ0=nothing,auxpar,kws...)
     @info "Running PG algorithm with BlockVRPF method.."
     @showprogress 1 for n = 1:(args.NBurn+args.NChain)
         θ[n+1,:] = MH(θ[n,:],Path,y,args.NFold,model=model,T=args.T[end],λ=λ,Σ=Σ)
-        println(θ[n+1,:],log_pdmp_posterior(Path,T[end],y,model,model.convert_to_pars(θ[n+1,:])))
+        println(θ[n+1,:],log_pdmp_posterior(Path,T[end],y,model,model.convert_to_pars(θ[n+1,:])),"  ",Path.K)
         #L = BSR.L
         L = Rejuvenate(Path,args.T,model,model.convert_to_pars(θ[n+1,:]),auxpar)
         R = cSMC(L,args.SMCN,args.T,y,model,model.convert_to_pars(θ[n+1,:]),auxpar)
