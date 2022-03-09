@@ -11,14 +11,14 @@ for i = 1:(J.K+1)
 end
 current()
 
-T = collect(0:10:1000)
+T = collect(0:100:1000)
 θ0 = rand.(CP.prior)
-λ,Σ,_ = VRPF.TunePars(CP,y,T,θ0=θ0,SMCAdaptN=5,NAdapt=50000)
+λ,Σ,_ = VRPF.TunePars(CP,y,T,θ0=[0.9,1.0,0.71,4.0,10.0],SMCAdaptN=5,NAdapt=50000)
 
 θ0 = rand.(CP.prior)
 @save "proppar.jld2" λ Σ θ0
 VRPF_10Particles = VRPF.PG(CP,y,T,proppar=(λ,Σ),θ0=θ0,SMCN=10)
-BlockVRPF_10Particles = BlockVRPF.PG(CP,y,T,proppar=(λ,Σ),θ0=θ0,auxpar=[2.0,1.0],SMCN=10)
+BlockVRPF_10Particles = BlockVRPF.PG(CP,y,T,proppar=(λ,Σ),θ0=θ0,auxpar=[0.1,0.05],SMCN=10)
 
 
 density(VRPF_10Particles[:,3])
