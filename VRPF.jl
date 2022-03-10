@@ -274,7 +274,7 @@ function cSMC(L,N,T,y,model,par)
 end
 @kwdef mutable struct PGargs
     dim::Int64
-    λ0::Float64 = 1.0
+    λ0::Float64 = 2.0
     Σ0::Matrix{Float64} = 10.0*Matrix{Float64}(LinearAlgebra.I,dim,dim)
     μ0::Vector{Float64} = zeros(dim)
     NAdapt::Int64 = 50000
@@ -284,7 +284,7 @@ end
     SMCN::Int64 = 100
     T::Vector{Float64}
     NFold::Int64 = 500
-    Globalalpha::Float64 = 0.234
+    Globalalpha::Float64 = 0.200
     Componentalpha::Float64 = 0.5
 end
 function Tuneλ(oldθ,Z,λ0,γ;process,y,End,model,args)
@@ -335,7 +335,7 @@ function TunePars(model,y,T;θ0=nothing,method="Global",kws...)
     L = BSR.X
     # update
     @info "Tuning PG parameters..."
-    for n = 1:args.NAdapt
+    @showprogress 1 for n = 1:args.NAdapt
         # Propose new parameters
         if method == "Component"
             Λ = Matrix{Float64}(Diagonal(sqrt.(λmat[n,:])))
@@ -361,7 +361,7 @@ function TunePars(model,y,T;θ0=nothing,method="Global",kws...)
             oldpar = newpar
             oldθ = newθ
         end
-        println(oldθ,log_pdmp_posterior(Path,args.T[end],y,model,oldpar))
+        #println(oldθ,log_pdmp_posterior(Path,args.T[end],y,model,oldpar))
         Σ = Σ + n^(-1/3)*((oldθ.-μ)*transpose(oldθ.-μ)-Σ)+1e-10*LinearAlgebra.I
         μ = μ .+ n^(-1/3)*(oldθ .- μ)
         R = cSMC(L,args.SMCAdaptN,args.T,y,model,oldpar)
@@ -425,7 +425,7 @@ function PG(model,y,T;proppar=nothing,θ0=nothing,method="Global",kws...)
     @info "Running PG algorithms..."
     @showprogress 2 for n = 1:(args.NBurn+args.NChain)
         θ[n+1,:] = MH(θ[n,:],Path,y,args.NFold,method=method,model=model,T=T[end],λ=λ,Σ=Σ)
-        #println(θ[n+1,:],log_pdmp_posterior(Path,T[end],y,model,model.convert_to_pars(θ[n+1,:])))
+        println(θ[n+1,:],log_pdmp_posterior(Path,T[end],y,model,model.convert_to_pars(θ[n+1,:])))
         R = cSMC(L,args.SMCN,args.T,y,model,model.convert_to_pars(θ[n+1,:]))
         BSR = BS(R,y,args.T,model,model.convert_to_pars(θ[n+1,:]))
         Path = BSR.Path
